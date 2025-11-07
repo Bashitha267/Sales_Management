@@ -79,6 +79,16 @@ include 'refs_header.php';
                     <div class="text-gray-500 text-sm">Sales and performance report</div>
                 </div>
             </a>
+            <a href="refs_payment.php"
+                class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-indigo-50 group">
+                <div class="bg-indigo-100 text-indigo-700 rounded-full p-3 mr-4">
+                    <span data-feather="dollar-sign" class="w-7 h-7"></span>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold group-hover:text-indigo-600">Payment Overview</div>
+                    <div class="text-gray-500 text-sm">Track your monthly payouts and statuses</div>
+                </div>
+            </a>
         </div>
     </div>
     <script>

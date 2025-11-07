@@ -134,6 +134,8 @@ if ($user_role === 'admin') {
     include 'admin_header.php';
 } else if ($user_role === 'rep') {
     include 'refs/refs_header.php';
+} else if ($user_role === 'team leader') {
+    include 'leader/leader_header.php';
 }
 ?>
 <!DOCTYPE html>
