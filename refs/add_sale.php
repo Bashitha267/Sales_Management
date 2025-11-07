@@ -10,14 +10,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_sale'])) {
     if ($sale_id_to_cancel > 0) {
         $mysqli->begin_transaction();
         try {
-            // Delete child records first (items)
+            // Delete child records first
             $stmt = $mysqli->prepare("DELETE FROM sale_details WHERE sale_id = ?");
             $stmt->bind_param('i', $sale_id_to_cancel);
             $stmt->execute();
             $stmt->close();
 
-            // Delete parent record (the sale log)
-            $stmt = $mysqli->prepare("DELETE FROM sales_log WHERE id = ?");
+            // Delete parent record
+            $stmt = $mysqli->prepare("DELETE FROM sales_log WHERE sale_id = ?");
             $stmt->bind_param('i', $sale_id_to_cancel);
             $stmt->execute();
             $stmt->close();
@@ -25,14 +25,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_sale'])) {
             $mysqli->commit();
         } catch (mysqli_sql_exception $exception) {
             $mysqli->rollback();
-            // In a real app, you might set a session error flash message here
         }
     }
-    // Redirect to dashboard after cancellation
     header('Location: ref_dashboard.php');
     exit;
 }
-
 
 // Handle form submission for creating a sale
 $ref_id = $_SESSION['user_id'] ?? null;
@@ -41,18 +38,23 @@ $sale_id = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_sale'])) {
     $sale_date = trim($_POST['sale_date']) ?: null;
+    $team_id = (int) ($_POST['team_id'] ?? 0);
+
     if (!$sale_date) {
         $errors[] = "Sale date is required.";
     }
     if (!$ref_id) {
         $errors[] = "Reference user not found.";
     }
+    if ($team_id <= 0) {
+        $errors[] = "Please select a valid team.";
+    }
+
     if (empty($errors)) {
-        $stmt = $mysqli->prepare("INSERT INTO sales_log(ref_id, sale_date) VALUES (?, ?)");
-        $stmt->bind_param('is', $ref_id, $sale_date);
+        $stmt = $mysqli->prepare("INSERT INTO sales_log (ref_id, team_id, sale_date) VALUES (?, ?, ?)");
+        $stmt->bind_param('iis', $ref_id, $team_id, $sale_date);
         if ($stmt->execute()) {
             $sale_id = $stmt->insert_id;
-            // After creating sale, redirect with sale_id in GET
             header("Location: add_sale.php?sale_id={$sale_id}");
             exit;
         } else {
@@ -62,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_sale'])) {
     }
 }
 
-// Handle adding item to sale (AJAX or POST)
+// Handle adding item to sale (AJAX)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
     $sale_id = (int) ($_POST['sale_id'] ?? 0);
     $item_code = trim($_POST['item_code'] ?? '');
@@ -70,7 +72,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
     if (!$sale_id || !$item_code || $qty < 1) {
         $resp = ["success" => false, "error" => "All fields required"];
     } else {
-        // Validate item exists
         $stmt = $mysqli->prepare("SELECT * FROM items WHERE item_code=?");
         $stmt->bind_param('s', $item_code);
         $stmt->execute();
@@ -78,7 +79,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
         if ($result->num_rows < 1) {
             $resp = ["success" => false, "error" => "Item code not found."];
         } else {
-            // Insert into sale_details
             $stmt2 = $mysqli->prepare("INSERT INTO sale_details (sale_id, item_code, qty) VALUES (?, ?, ?)");
             $stmt2->bind_param('isi', $sale_id, $item_code, $qty);
             if ($stmt2->execute()) {
@@ -95,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
     exit;
 }
 
-// AJAX endpoint for searching items by code or name
+// AJAX endpoint: search items
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'item_search') {
     $query = trim($_GET['q'] ?? '');
     $items = [];
@@ -115,7 +115,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'item_search') {
     exit;
 }
 
-// List existing items added to sale (for UI refresh)
+// AJAX endpoint: list items in sale
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'sale_items' && isset($_GET['sale_id'])) {
     $sale_id = (int) $_GET['sale_id'];
     $items = [];
@@ -132,7 +132,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'sale_items' && isset($_GET['sale_
     exit;
 }
 
-// Check if we are editing an existing sale
+// Existing sale check
 $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
 ?>
 <!DOCTYPE html>
@@ -140,13 +140,12 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
 
 <head>
     <meta charset="UTF-8">
-    <title>
-        <?= $existing_sale_id ? "Manage Sale Items" : "Create New Sale" ?>
-    </title>
+    <title><?= $existing_sale_id ? "Manage Sale Items" : "Create New Sale" ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="bg-slate-100 min-h-screen">
+    <?php include 'refs_header.php' ?>
     <div class="max-w-xl mx-auto mt-10 bg-white rounded-xl shadow p-6 sm:p-8">
 
         <?php if ($existing_sale_id == 0): ?>
@@ -160,10 +159,12 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                 <div class="bg-red-100 text-red-700 px-4 py-3 rounded mb-4">
                     <ul class="list-disc list-inside text-sm">
                         <?php foreach ($errors as $e): ?>
-                            <li><?php echo htmlspecialchars($e) ?></li><?php endforeach; ?>
+                            <li><?= htmlspecialchars($e) ?></li>
+                        <?php endforeach; ?>
                     </ul>
                 </div>
             <?php endif; ?>
+
             <form method="post" class="space-y-6">
                 <div>
                     <label class="block font-medium text-slate-700 mb-1">Sale Date<span
@@ -171,6 +172,32 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                     <input type="datetime-local" name="sale_date" required value="<?= date('Y-m-d\TH:i') ?>"
                         class="w-full border rounded px-4 py-2 focus:outline-none focus:ring transition">
                 </div>
+
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1">Select Team<span
+                            class="text-red-500">*</span></label>
+                    <select name="team_id" required
+                        class="w-full border rounded px-4 py-2 focus:outline-none focus:ring transition">
+                        <option value="">-- Choose Team --</option>
+                        <?php
+                        // Select teams where this user (ref_id) is a member
+                        $teamRes = $mysqli->query("SELECT DISTINCT team_id FROM team_members WHERE member_id = $ref_id ORDER BY team_id");
+
+                        if ($teamRes && $teamRes->num_rows > 0):
+                            while ($t = $teamRes->fetch_assoc()):
+                                ?>
+                                <option value="<?= htmlspecialchars($t['team_id']) ?>">
+                                    <?= htmlspecialchars($t['team_id']) ?>
+                                </option>
+                                <?php
+                            endwhile;
+                        else:
+                            ?>
+                            <option value="">You are not in a team</option>
+                        <?php endif; ?>
+                    </select>
+                </div>
+
                 <button type="submit" name="create_sale"
                     class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded transition">
                     Start Sale
@@ -179,7 +206,6 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
 
         <?php else: ?>
             <h2 class="text-2xl font-bold mb-6 text-blue-700 flex items-center gap-2">
-
                 Add items to sale
                 <span class="text-lg font-mono text-slate-500">(Sale #<?= $existing_sale_id ?>)</span>
             </h2>
@@ -231,7 +257,6 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                         Save &amp; Close
                     </a>
                 </div>
-
             </div>
             <div class="mt-4 text-center">
                 <a href="view_sales.php" class="text-slate-500 hover:underline text-sm">&larr; Or go back to all sales</a>
@@ -241,7 +266,7 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
 
     <?php if ($existing_sale_id > 0): ?>
         <script>
-            // --- Item Search Autocomplete (AJAX) ---
+            // --- Item Search Autocomplete ---
             (function () {
                 const itemInput = document.getElementById('item_code_search');
                 const suggestions = document.getElementById('itemSuggestions');
@@ -287,7 +312,7 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                 });
             })();
 
-            // --- Add Item to Sale (AJAX) ---
+            // --- Add Item to Sale ---
             (function () {
                 const addItemForm = document.getElementById('addItemForm');
                 const saleItemsContainer = document.getElementById('saleItemsContainer');
@@ -315,7 +340,6 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                         });
                 }
 
-                // Load items on page load
                 fetchItems();
 
                 addItemForm.addEventListener('submit', function (e) {
@@ -330,7 +354,7 @@ $existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
                             if (resp.success) {
                                 addItemForm.reset();
                                 document.getElementById('item_code_search').focus();
-                                fetchItems(); // Refresh the list
+                                fetchItems();
                             } else {
                                 alert(resp.error || "Unable to add item.");
                             }

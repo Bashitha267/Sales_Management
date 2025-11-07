@@ -80,7 +80,7 @@ $sales = [];
 
 // FIX 2 & 4: Use WHERE (not HAVING) and prepared statements
 // *** UPDATED to JOIN items table and SUM points ***
-$sql = "SELECT s.sale_id, s.ref_id, s.sale_date, 
+$sql = "SELECT s.sale_id, s.ref_id, s.sale_date,s.team_id ,
                 COUNT(sd.item_code) AS items_count, 
                 COALESCE(SUM(sd.qty),0) as total_qty,
                 COALESCE(SUM(sd.qty * i.points_rep), 0) as total_points
@@ -139,6 +139,8 @@ if ($result) {
                     <thead class="bg-slate-50">
                         <tr>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Sale ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Team ID</th>
+
                             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Date</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Total Items</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Quantity</th>
@@ -150,6 +152,7 @@ if ($result) {
                         <?php foreach ($sales as $sale): ?>
                             <tr>
                                 <td class="px-4 py-3 font-mono"><?= htmlspecialchars($sale['sale_id']) ?></td>
+                                <td class="px-4 py-3 font-mono"><?= htmlspecialchars($sale['team_id']) ?></td>
                                 <td class="px-4 py-3"><?= htmlspecialchars(date("Y-m-d H:i", strtotime($sale['sale_date']))) ?>
                                 </td>
                                 <td class="px-4 py-3"><?= (int) $sale['items_count'] ?></td>

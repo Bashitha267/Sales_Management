@@ -140,7 +140,7 @@ if (isset($_GET['logout'])) {
 
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-4 mb-4">
-            <a href="reports.php"
+            <a href="payment.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-red-100 text-red-700 rounded-full p-3 mr-4">
                     <span data-feather="credit-card" class="w-7 h-7"></span>
@@ -150,7 +150,7 @@ if (isset($_GET['logout'])) {
                     <div class="text-gray-500 text-sm">View and manage payments</div>
                 </div>
             </a>
-            <a href="reports.php"
+            <a href="admin_sales_reports.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-red-100 text-red-700 rounded-full p-3 mr-4">
                     <span data-feather="bar-chart-2" class="w-7 h-7"></span>
