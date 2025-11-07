@@ -171,7 +171,7 @@ $result = $stmt->get_result();
                         </div>
                         <div class="flex items-center justify-between mt-auto pt-2 gap-2">
                             <button
-                                class="edit-btn px-4 py-2 bg-gray-400 text-black rounded hover:bg-gray-600 text-sm font-medium transition"
+                                class="edit-btn px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm font-medium transition"
                                 data-id="<?= $row['id'] ?>" data-code="<?= htmlspecialchars($row['item_code'], ENT_QUOTES) ?>"
                                 data-name="<?= htmlspecialchars($row['item_name'], ENT_QUOTES) ?>"
                                 data-pl="<?= $row['points_leader'] ?>" data-pr="<?= $row['points_rep'] ?>"
@@ -181,7 +181,7 @@ $result = $stmt->get_result();
                             <form method="post" class="inline" onsubmit="return confirm('Delete this item?');">
                                 <input type="hidden" name="delete_id" value="<?= $row['id'] ?>">
                                 <button type="submit"
-                                    class="px-4 py-2 bg-red-400 text-black rounded hover:bg-red-600 text-sm font-medium transition">Delete</button>
+                                    class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-medium transition">Delete</button>
                             </form>
                         </div>
                     </div>
