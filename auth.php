@@ -30,7 +30,11 @@ function login($username, $password)
 
     $result = $stmt->get_result();
     $user = $result->fetch_assoc();
-
+    // echo $user['username'];
+    // echo $password;
+    // echo $user['password'];
+    // echo $user['role'];
+    // echo password_verify($password, $user['password']);
     if ($user && $password && password_verify($password, $user['password'])) {
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
@@ -44,7 +48,7 @@ function login($username, $password)
             case 'rep':
                 header('Location: /ref/refs/ref_dashboard.php');
                 break;
-            case 'team leader':
+            case 'representative':
                 header('Location: /ref/leader/leader_dashboard.php');
                 break;
             default:

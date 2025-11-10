@@ -20,7 +20,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
         $params = [$searchWildcard, $searchWildcard];
         $types = 'ss';
     }
-    $sql .= " ORDER BY created_at DESC";
+    // FIXED: Changed created_at to id
+    $sql .= " ORDER BY id DESC";
 
     $stmt = $mysqli->prepare($sql);
     if ($params) {
@@ -58,8 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id']) && isset($
     $id = (int) $_POST['edit_id'];
     $code = trim($_POST['item_code'] ?? '');
     $name = trim($_POST['item_name'] ?? '');
-    $pl = trim($_POST['points_leader'] ?? '');
-    $pr = trim($_POST['points_rep'] ?? '');
+    // FIXED: Use correct column names from database
+    $pl = trim($_POST['representative_points'] ?? ''); // Was points_leader
+    $pr = trim($_POST['rep_points'] ?? ''); // Was points_rep
     $price = trim($_POST['price'] ?? '');
     $response = array('success' => false);
 
@@ -70,7 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id']) && isset($
     } elseif (!is_numeric($price) || floatval($price) < 0) {
         $response['error'] = 'Price must be a valid number greater than or equal to 0.';
     } else {
-        $stmt = $mysqli->prepare("UPDATE items SET item_code=?, item_name=?, points_leader=?, points_rep=?, price=? WHERE id=?");
+        // FIXED: Use correct column names in UPDATE
+        $stmt = $mysqli->prepare("UPDATE items SET item_code=?, item_name=?, representative_points=?, rep_points=?, price=? WHERE id=?");
         $stmt->bind_param('ssiidi', $code, $name, $pl, $pr, $price, $id);
         if ($stmt->execute()) {
             $response['success'] = true;
@@ -97,7 +100,8 @@ if ($search !== '') {
     $params = [$searchWildcard, $searchWildcard];
     $types = 'ss';
 }
-$sql .= " ORDER BY created_at DESC";
+// FIXED: Changed created_at to id
+$sql .= " ORDER BY id DESC";
 $stmt = $mysqli->prepare($sql);
 if ($params) {
     $stmt->bind_param($types, ...$params);
@@ -158,10 +162,10 @@ $result = $stmt->get_result();
                         </div>
                         <div class="flex items-center mb-2 gap-3">
                             <span class="text-sm rounded-full bg-indigo-100 text-indigo-800 px-3 py-1 font-medium">
-                                Leader: <?= (int) $row['points_leader'] ?>
+                                Leader: <?= (int) $row['representative_points'] ?>
                             </span>
                             <span class="text-sm rounded-full bg-amber-100 text-amber-800 px-3 py-1 font-medium">
-                                Rep: <?= (int) $row['points_rep'] ?>
+                                Rep: <?= (int) $row['rep_points'] ?>
                             </span>
                         </div>
                         <div class="mb-2">
@@ -174,7 +178,7 @@ $result = $stmt->get_result();
                                 class="edit-btn px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm font-medium transition"
                                 data-id="<?= $row['id'] ?>" data-code="<?= htmlspecialchars($row['item_code'], ENT_QUOTES) ?>"
                                 data-name="<?= htmlspecialchars($row['item_name'], ENT_QUOTES) ?>"
-                                data-pl="<?= $row['points_leader'] ?>" data-pr="<?= $row['points_rep'] ?>"
+                                data-pl="<?= $row['representative_points'] ?>" data-pr="<?= $row['rep_points'] ?>"
                                 data-price="<?= htmlspecialchars($row['price'], ENT_QUOTES) ?>">
                                 Edit
                             </button>
@@ -221,15 +225,15 @@ $result = $stmt->get_result();
                         class="w-full border rounded px-3 py-2 text-base focus:ring focus:ring-indigo-100 focus:outline-none">
                 </div>
                 <div class="mb-4">
-                    <label class="block text-sm font-medium text-slate-700 mb-1" for="edit_points_leader">Points
+                    <label class="block text-sm font-medium text-slate-700 mb-1" for="edit_representative_points">Points
                         Leader</label>
-                    <input type="number" name="points_leader" id="edit_points_leader" min="0" required
+                    <input type="number" name="representative_points" id="edit_representative_points" min="0" required
                         class="w-full border rounded px-3 py-2 text-base focus:ring focus:ring-indigo-100 focus:outline-none">
                 </div>
                 <div class="mb-4">
-                    <label class="block text-sm font-medium text-slate-700 mb-1" for="edit_points_rep">Points
+                    <label class="block text-sm font-medium text-slate-700 mb-1" for="edit_rep_points">Points
                         Rep</label>
-                    <input type="number" name="points_rep" id="edit_points_rep" min="0" required
+                    <input type="number" name="rep_points" id="edit_rep_points" min="0" required
                         class="w-full border rounded px-3 py-2 text-base focus:ring focus:ring-indigo-100 focus:outline-none">
                 </div>
                 <div class="mb-4">
@@ -281,10 +285,10 @@ $result = $stmt->get_result();
                     </div>
                     <div class="flex items-center mb-2 gap-3">
                         <span class="text-sm rounded-full bg-indigo-100 text-indigo-800 px-3 py-1 font-medium">
-                            Leader: ${item.points_leader}
+                            Leader: ${item.representative_points}
                         </span>
                         <span class="text-sm rounded-full bg-amber-100 text-amber-800 px-3 py-1 font-medium">
-                            Rep: ${item.points_rep}
+                            Rep: ${item.rep_points}
                         </span>
                     </div>
                     <div class="mb-2">
@@ -297,8 +301,8 @@ $result = $stmt->get_result();
                             data-id="${item.id}"
                             data-code="${escapeHtml(item.item_code)}"
                             data-name="${escapeHtml(item.item_name)}"
-                            data-pl="${item.points_leader}"
-                            data-pr="${item.points_rep}"
+                            data-pl="${item.representative_points}"
+                            data-pr="${item.rep_points}"
                             data-price="${item.price || 0}"
                         >
                             Edit
@@ -309,7 +313,7 @@ $result = $stmt->get_result();
                         </form>
                     </div>
                 </div>
-            `;
+                `;
             }
 
             function showNoItemsMsg(searchTerm) {
@@ -321,7 +325,7 @@ $result = $stmt->get_result();
                         ${searchTerm ? 'Try a different search term.' : 'No items have been created yet.'}
                     </p>
                 </div>
-            `;
+                `;
             }
 
             function fetchItems(searchTerm) {
@@ -371,8 +375,9 @@ $result = $stmt->get_result();
                 document.getElementById('edit_id').value = id;
                 document.getElementById('edit_item_code').value = code;
                 document.getElementById('edit_item_name').value = name;
-                document.getElementById('edit_points_leader').value = pl;
-                document.getElementById('edit_points_rep').value = pr;
+                // FIXED: Use correct modal input IDs
+                document.getElementById('edit_representative_points').value = pl;
+                document.getElementById('edit_rep_points').value = pr;
                 document.getElementById('edit_price').value = price;
                 editModal.classList.remove('hidden');
             }

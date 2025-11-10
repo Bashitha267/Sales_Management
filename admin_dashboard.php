@@ -5,6 +5,20 @@ requireLogin();
 if (isset($_GET['logout'])) {
     logout();
 }
+
+// --- FETCH ADMIN DETAILS ---
+require_once 'config.php'; // Included config for database access
+$admin_details = null;
+if (isset($_SESSION['user_id'])) {
+    $admin_id = (int) $_SESSION['user_id'];
+    // Check for role = 'admin' to be safe
+    $stmt = $mysqli->prepare("SELECT id, first_name, last_name FROM users WHERE id = ? AND role = 'admin'");
+    $stmt->bind_param('i', $admin_id);
+    $stmt->execute();
+    $admin_details = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+}
+// --- END FETCH ---
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -19,7 +33,6 @@ if (isset($_GET['logout'])) {
 
 <body class="bg-gray-50 min-h-screen">
 
-    <!-- NAVBAR -->
     <nav class="bg-indigo-600 text-white px-6 py-4 shadow-md">
         <div class="max-w-6xl mx-auto flex justify-between items-center">
             <div class="flex items-center gap-2">
@@ -36,7 +49,18 @@ if (isset($_GET['logout'])) {
                 </button>
 
                 <div id="menu"
-                    class="hidden absolute right-0 mt-3 w-40 bg-white text-gray-700 rounded-md shadow-md border">
+                    class="hidden absolute right-0 mt-3 w-48 bg-white text-gray-700 rounded-md shadow-md border">
+                    <?php if ($admin_details): ?>
+                        <div class="px-4 py-3 border-b">
+                            <p class="text-sm font-semibold text-gray-900 truncate"
+                                title="<?= htmlspecialchars($admin_details['first_name'] . ' ' . $admin_details['last_name']) ?>">
+                                <?= htmlspecialchars($admin_details['first_name'] . ' ' . $admin_details['last_name']) ?>
+                            </p>
+                            <p class="text-xs text-gray-500">
+                                Admin ID: <?= htmlspecialchars($admin_details['id']) ?>
+                            </p>
+                        </div>
+                    <?php endif; ?>
                     <a href="profile.php" class="flex items-center px-4 py-2 hover:bg-gray-100">
                         <span data-feather="user" class="w-4 h-4 mr-2"></span> Profile
                     </a>
@@ -48,7 +72,6 @@ if (isset($_GET['logout'])) {
         </div>
     </nav>
 
-    <!-- DASHBOARD -->
     <div class="max-w-5xl mx-auto py-12 px-6">
 
         <h1 class="text-3xl font-bold text-blue-800 mb-10 text-center flex items-center justify-center gap-2">
@@ -56,10 +79,8 @@ if (isset($_GET['logout'])) {
             Admin Dashboard
         </h1>
 
-        <!-- GRID OF CARDS -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
 
-            <!-- Add User -->
             <a href="users/add_new_user.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-indigo-100 text-indigo-700 rounded-full p-3 mr-4">
@@ -71,19 +92,17 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
 
-            <!-- Create Team -->
-            <a href="/ref/teams/createteam.php"
+            <a href="approve_sales.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-green-100 text-green-700 rounded-full p-3 mr-4">
-                    <span data-feather="users" class="w-7 h-7"></span>
+                    <span data-feather="check-square" class="w-7 h-7"></span>
                 </div>
                 <div>
-                    <div class="text-lg font-semibold group-hover:text-green-600">Create Team</div>
-                    <div class="text-gray-500 text-sm">Build a new team</div>
+                    <div class="text-lg font-semibold group-hover:text-green-600">Approve Sales</div>
+                    <div class="text-gray-500 text-sm">Review 'half' sale requests</div>
                 </div>
             </a>
 
-            <!-- Add Item -->
             <a href="items/create_item.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-yellow-100 text-yellow-700 rounded-full p-3 mr-4">
@@ -95,13 +114,6 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
 
-            <!-- Reports -->
-
-
-            <!-- View Users -->
-
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-4 mb-4">
             <a href="users/view_users.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-purple-100 text-purple-700 rounded-full p-3 mr-4">
@@ -113,7 +125,6 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
 
-            <!-- View Teams -->
             <a href="teams/view_teams.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-blue-100 text-blue-700 rounded-full p-3 mr-4">
@@ -125,7 +136,6 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
 
-            <!-- View Items -->
             <a href="items/view_items.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
                 <div class="bg-orange-100 text-orange-700 rounded-full p-3 mr-4">
@@ -137,21 +147,30 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
 
-
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mt-4 mb-4">
-            <a href="payment.php"
+            <a href="rep_payments.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
-                <div class="bg-red-100 text-red-700 rounded-full p-3 mr-4">
-                    <span data-feather="credit-card" class="w-7 h-7"></span>
+                <div class="bg-green-100 text-green-700 rounded-full p-3 mr-4">
+                    <span data-feather="dollar-sign" class="w-7 h-7"></span>
                 </div>
                 <div>
-                    <div class="text-lg font-semibold group-hover:text-red-600">Payments</div>
-                    <div class="text-gray-500 text-sm">View and manage payments</div>
+                    <div class="text-lg font-semibold group-hover:text-green-600">Weekly Payments</div>
+                    <div class="text-gray-500 text-sm">Pay weekly personal points</div>
                 </div>
             </a>
-            <a href="admin_sales_reports.php"
+
+            <a href="agency_bonus_payments.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-50 transition group">
+                <div class="bg-blue-100 text-blue-700 rounded-full p-3 mr-4">
+                    <span data-feather="award" class="w-7 h-7"></span>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold group-hover:text-blue-600">Agency Bonus</div>
+                    <div class="text-gray-500 text-sm">Pay agency threshold bonuses</div>
+                </div>
+            </a>
+
+            <a href="admin_sales_reports.php"
+                class="flex items-center p-6 bg-white rounded-lg shadow hover:bg-blue-5D0 transition group">
                 <div class="bg-red-100 text-red-700 rounded-full p-3 mr-4">
                     <span data-feather="bar-chart-2" class="w-7 h-7"></span>
                 </div>
@@ -161,12 +180,19 @@ if (isset($_GET['logout'])) {
                 </div>
             </a>
         </div>
-
-
     </div>
 
     <script>
         feather.replace();
+
+        // Simple script to close the dropdown if clicking outside
+        document.addEventListener('click', function (event) {
+            var menu = document.getElementById('menu');
+            var button = menu.previousElementSibling;
+            if (!menu.classList.contains('hidden') && !menu.contains(event.target) && !button.contains(event.target)) {
+                menu.classList.add('hidden');
+            }
+        });
     </script>
 </body>
 

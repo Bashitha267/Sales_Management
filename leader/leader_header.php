@@ -4,7 +4,7 @@ if (!isset($_SESSION)) {
     session_start();
 }
 
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'team leader') {
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'representative') {
     header('Location: /ref/login.php');
     exit;
 }

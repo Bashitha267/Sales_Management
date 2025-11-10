@@ -3,498 +3,427 @@ require_once '../auth.php';
 requireLogin();
 include '../config.php';
 
-$leader_id = $_SESSION['user_id'] ?? 0;
+$representative_id = $_SESSION['user_id'] ?? 0;
+$role = $_SESSION['role'] ?? '';
 
-// === AJAX: Search for Reps ===
-if (isset($_GET['search_reps'])) {
-    header('Content-Type: application/json');
-    $term = '%' . $_GET['search_reps'] . '%';
-    $sql = "SELECT id, first_name, last_name, username 
-            FROM users 
-            WHERE role='rep' 
-            AND (first_name LIKE ? OR last_name LIKE ? OR username LIKE ?)
-            LIMIT 10";
-    $stmt = $mysqli->prepare($sql);
-    $stmt->bind_param("sss", $term, $term, $term);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $out = [];
-    while ($r = $res->fetch_assoc())
-        $out[] = $r;
-    echo json_encode($out);
-    exit;
+if ($representative_id <= 0 || $role !== 'representative') {
+    header("Location: leader_dashboard.php");
+    exit();
 }
 
-// === AJAX: Add or Remove Members ===
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    header('Content-Type: application/json');
-    $response = ['success' => false, 'message' => 'An error occurred.'];
+function set_flash_and_redirect(string $message, string $type = 'success'): void
+{
+    $_SESSION['flash_message'] = $message;
+    $_SESSION['flash_type'] = $type;
+    header("Location: manage_team.php");
+    exit();
+}
 
-    // --- Action: Add Member ---
-    if ($_POST['action'] === 'add_member') {
-        $team_id = intval($_POST['team_id'] ?? 0);
+function h(?string $value): string
+{
+    return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
+}
+
+$flash_message = $_SESSION['flash_message'] ?? '';
+$flash_type = $_SESSION['flash_type'] ?? '';
+$generated_invite_link = $_SESSION['generated_invite_link'] ?? '';
+unset($_SESSION['flash_message'], $_SESSION['flash_type'], $_SESSION['generated_invite_link']);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'remove_member') {
+        $agency_id = intval($_POST['agency_id'] ?? 0);
         $member_id = intval($_POST['member_id'] ?? 0);
 
-        // *** BUG FIX: Validate that a member was actually selected ***
-        if ($team_id <= 0 || $member_id <= 0) {
-            $response['message'] = 'Please select a valid team and member.';
-            echo json_encode($response);
-            exit;
+        if ($agency_id <= 0 || $member_id <= 0) {
+            set_flash_and_redirect('Invalid representative selection.', 'error');
         }
 
-        // Security: Check if leader owns this team
-        $check = $mysqli->prepare("SELECT 1 FROM teams WHERE team_id=? AND leader_id=?");
-        $check->bind_param("ii", $team_id, $leader_id);
-        $check->execute();
-        if ($check->get_result()->num_rows == 0) {
-            $response['message'] = 'Permission denied.';
-            echo json_encode($response);
-            exit;
-        }
-        $check->close();
+        $checkAgency = $mysqli->prepare("SELECT 1 FROM agencies WHERE id = ? AND representative_id = ?");
+        $checkAgency->bind_param("ii", $agency_id, $representative_id);
+        $checkAgency->execute();
+        $ownsAgency = $checkAgency->get_result()->num_rows > 0;
+        $checkAgency->close();
 
-        // Check if member already exists in this team
-        $exists = $mysqli->prepare("SELECT 1 FROM team_members WHERE team_id=? AND member_id=?");
-        $exists->bind_param("ii", $team_id, $member_id);
-        $exists->execute();
-        if ($exists->get_result()->num_rows > 0) {
-            $response['message'] = 'This member is already in that team.';
-            echo json_encode($response);
-            exit;
-        }
-        $exists->close();
-
-        // All checks passed, add the member
-        $insert = $mysqli->prepare("INSERT INTO team_members (team_id, member_id) VALUES (?, ?)");
-        $insert->bind_param("ii", $team_id, $member_id);
-        if ($insert->execute()) {
-            // Get new member's details to send back to the page
-            $stmt = $mysqli->prepare("SELECT id, first_name, last_name, username FROM users WHERE id=?");
-            $stmt->bind_param("i", $member_id);
-            $stmt->execute();
-            $new_member = $stmt->get_result()->fetch_assoc();
-
-            $response['success'] = true;
-            $response['message'] = 'Member added successfully!';
-            $response['new_member'] = $new_member;
-            $response['team_id'] = $team_id; // Tell JS which card to update
-        } else {
-            $response['message'] = 'Database error adding member.';
-        }
-        $insert->close();
-    }
-
-    // --- Action: Remove Member (BUG FIX: Added missing logic) ---
-    if ($_POST['action'] === 'remove_member') {
-        $team_id = intval($_POST['rm_team_id'] ?? 0);
-        $member_id = intval($_POST['rm_member_id'] ?? 0);
-
-        if ($team_id <= 0 || $member_id <= 0) {
-            $response['message'] = 'Invalid data provided.';
-            echo json_encode($response);
-            exit;
+        if (!$ownsAgency) {
+            set_flash_and_redirect('You do not have permission to manage that agency.', 'error');
         }
 
-        // Security: Check if leader owns the team this member is in
-        $check = $mysqli->prepare("SELECT 1 FROM teams WHERE team_id=? AND leader_id=?");
-        $check->bind_param("ii", $team_id, $leader_id);
-        $check->execute();
-        if ($check->get_result()->num_rows == 0) {
-            $response['message'] = 'Permission denied.';
-            echo json_encode($response);
-            exit;
-        }
-        $check->close();
+        $delete = $mysqli->prepare("DELETE FROM agency_reps WHERE agency_id = ? AND rep_user_id = ?");
+        $delete->bind_param("ii", $agency_id, $member_id);
+        $delete->execute();
 
-        // Remove member from the team
-        $delete = $mysqli->prepare("DELETE FROM team_members WHERE team_id=? AND member_id=?");
-        $delete->bind_param("ii", $team_id, $member_id);
-        if ($delete->execute() && $delete->affected_rows > 0) {
-            $response['success'] = true;
-            $response['message'] = 'Member removed successfully.';
-            $response['team_id'] = $team_id;
-            $response['member_id'] = $member_id; // Tell JS which <li> to remove
-        } else {
-            $response['message'] = 'Error removing member or member not found.';
+        if ($delete->affected_rows > 0) {
+            $delete->close();
+            set_flash_and_redirect('Representative removed from the agency.', 'success');
         }
+
         $delete->close();
+        set_flash_and_redirect('Representative was not found in that agency.', 'error');
+    } elseif ($action === 'generate_link') {
+        $agency_id = intval($_POST['agency_id'] ?? 0);
+
+        if ($agency_id <= 0) {
+            set_flash_and_redirect('Please choose a valid agency.', 'error');
+        }
+
+        $checkAgency = $mysqli->prepare("SELECT 1 FROM agencies WHERE id = ? AND representative_id = ?");
+        $checkAgency->bind_param("ii", $agency_id, $representative_id);
+        $checkAgency->execute();
+        $ownsAgency = $checkAgency->get_result()->num_rows > 0;
+        $checkAgency->close();
+
+        if (!$ownsAgency) {
+            set_flash_and_redirect('You do not have permission to manage that agency.', 'error');
+        }
+
+        try {
+            $token = bin2hex(random_bytes(16));
+        } catch (Exception $e) {
+            set_flash_and_redirect('Unable to generate invite token. Please try again.', 'error');
+        }
+
+        $insert = $mysqli->prepare("INSERT INTO agency_invites (representative_id, agency_id, token) VALUES (?, ?, ?)");
+        if (!$insert) {
+            set_flash_and_redirect('Failed to prepare invite creation. Please try again.', 'error');
+        }
+
+        $insert->bind_param("iis", $representative_id, $agency_id, $token);
+        if ($insert->execute()) {
+            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            $host = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
+            $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+            $currentDir = rtrim(dirname($scriptName), '/\\');
+            $baseDir = $currentDir === '' || $currentDir === '.' ? '' : rtrim(dirname($currentDir), '/\\');
+            $invitePath = rtrim($baseDir, '/\\') . '/refs/join_agency.php';
+            $invitePath = '/' . ltrim(preg_replace('#/+#', '/', $invitePath), '/');
+            $invite_link = sprintf('%s://%s%s?token=%s', $scheme, $host, $invitePath, $token);
+            $_SESSION['generated_invite_link'] = $invite_link;
+            $insert->close();
+            set_flash_and_redirect('Invite link generated successfully.', 'success');
+        }
+
+        $error = $insert->error;
+        $insert->close();
+        set_flash_and_redirect('Failed to generate invite link. ' . (!empty($error) ? 'Error: ' . $error : 'Please try again.'), 'error');
     }
-
-    echo json_encode($response);
-    exit;
 }
-// === End of AJAX Handlers ===
 
-
-// --- Main Page Load Logic ---
-
-// Fetch all teams under this leader
-$teams = [];
-$stmt = $mysqli->prepare("SELECT team_id, team_name FROM teams WHERE leader_id = ?");
-$stmt->bind_param("i", $leader_id);
-$stmt->execute();
-$res = $stmt->get_result();
-while ($row = $res->fetch_assoc()) {
-    $teams[] = $row;
+// --- Fetch Agencies ---
+$agencies = [];
+$agencyStmt = $mysqli->prepare("SELECT id, agency_name FROM agencies WHERE representative_id = ? ORDER BY agency_name");
+$agencyStmt->bind_param("i", $representative_id);
+$agencyStmt->execute();
+$agencyResult = $agencyStmt->get_result();
+while ($row = $agencyResult->fetch_assoc()) {
+    $row['members'] = [];
+    $agencies[$row['id']] = $row;
 }
-$stmt->close();
+$agencyStmt->close();
 
-// Helper function to fetch members for each team
-function fetch_team_members($mysqli, $team_id)
-{
-    $stmt = $mysqli->prepare("
-        SELECT u.id, u.first_name, u.last_name, u.username
-        FROM team_members tm
-        JOIN users u ON tm.member_id = u.id
-        WHERE tm.team_id = ?
-        ORDER BY u.first_name, u.last_name");
-    $stmt->bind_param("i", $team_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+// Ensure the representative always has Agency 1 and Agency 2
+$expectedNames = ['Agency 1', 'Agency 2'];
+if (count($agencies) < 2) {
+    $existingNames = array_map(static fn($agency) => $agency['agency_name'], $agencies);
+    foreach ($expectedNames as $expectedName) {
+        if (!in_array($expectedName, $existingNames, true)) {
+            $insertAgency = $mysqli->prepare("INSERT INTO agencies (representative_id, agency_name) VALUES (?, ?)");
+            $insertAgency->bind_param("is", $representative_id, $expectedName);
+            $insertAgency->execute();
+            $newId = $insertAgency->insert_id;
+            $agencies[$newId] = [
+                'id' => $newId,
+                'agency_name' => $expectedName,
+                'members' => [],
+            ];
+            $insertAgency->close();
+        }
+    }
+    // Re-fetch agencies to keep ordering consistent after potential inserts
+    $agencies = [];
+    $agencyStmt = $mysqli->prepare("SELECT id, agency_name FROM agencies WHERE representative_id = ? ORDER BY agency_name");
+    $agencyStmt->bind_param("i", $representative_id);
+    $agencyStmt->execute();
+    $agencyResult = $agencyStmt->get_result();
+    while ($row = $agencyResult->fetch_assoc()) {
+        $row['members'] = [];
+        $agencies[$row['id']] = $row;
+    }
+    $agencyStmt->close();
 }
+
+// --- Fetch Members for each Agency ---
+if (!empty($agencies)) {
+    $memberStmt = $mysqli->prepare("
+        SELECT ar.agency_id,
+               u.id,
+               u.first_name,
+               u.last_name,
+               u.username,
+               u.email
+        FROM agency_reps ar
+        INNER JOIN users u ON u.id = ar.rep_user_id
+        WHERE ar.agency_id = ?
+        ORDER BY u.first_name, u.last_name
+    ");
+
+    foreach ($agencies as &$agency) {
+        $agencyId = $agency['id'];
+        $memberStmt->bind_param("i", $agencyId);
+        $memberStmt->execute();
+        $agency['members'] = $memberStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    }
+    unset($agency);
+    $memberStmt->close();
+}
+
+// --- Fetch Pending Requests ---
+$pendingRequests = [];
+$requestStmt = $mysqli->prepare("
+    SELECT ai.id,
+           ai.agency_id,
+           ai.rep_user_id,
+           ai.created_at,
+           ag.agency_name,
+           u.first_name,
+           u.last_name,
+           u.username,
+           u.email
+    FROM agency_invites ai
+    INNER JOIN agencies ag ON ag.id = ai.agency_id
+    LEFT JOIN users u ON u.id = ai.rep_user_id
+    WHERE ai.representative_id = ?
+      AND ai.status = 'pending'
+      AND ai.rep_user_id IS NOT NULL
+    ORDER BY ai.created_at DESC
+");
+$requestStmt->bind_param("i", $representative_id);
+$requestStmt->execute();
+$pendingRequests = $requestStmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$requestStmt->close();
+
+$mysqli->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
-    <title>Manage Teams</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Agencies</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/feather-icons"></script>
-    <style>
-        /* Simple transition for dynamically added/removed items */
-        .member-item {
-            transition: all 0.3s ease;
-            max-height: 100px;
-            overflow: hidden;
-        }
-
-        .member-item.removing {
-            opacity: 0;
-            max-height: 0;
-            padding-top: 0;
-            padding-bottom: 0;
-            border-width: 0;
-        }
-    </style>
 </head>
 
-<body class="bg-gray-100 min-h-screen">
-    <?php include 'leader_header.php' ?>
-    <div id="notification" class="fixed top-5 right-5 z-50 ">
-    </div>
+<body class="bg-slate-100 min-h-screen">
+    <?php include 'leader_header.php'; ?>
 
+    <main class="max-w-5xl mx-auto py-10 px-4 space-y-10">
+        <header class="flex items-center justify-between flex-wrap gap-4">
+            <h1 class="text-3xl font-bold text-slate-900 flex items-center gap-3">
+                <span data-feather="users" class="text-indigo-600"></span>
+                Manage Your Agencies
+            </h1>
 
-    <div class="max-w-5xl mx-auto py-10 px-4">
-        <h1 class="text-3xl font-bold text-gray-800 mb-8 flex items-center justify-start gap-3">
-            <span data-feather="users" class="text-blue-600"></span>
-            Manage Your Teams
-        </h1>
+        </header>
 
-        <?php if (empty($teams)): ?>
-            <div class="text-center text-gray-600 bg-white p-8 rounded-lg shadow">
-                <h2 class="text-xl font-semibold mb-2">No Teams Found</h2>
-                <p>You are not leading any teams yet. Go to the admin panel to create a team.</p>
+        <?php if (!empty($flash_message)): ?>
+            <?php
+            $flashStyles = $flash_type === 'error'
+                ? 'bg-red-100 text-red-800 border border-red-200'
+                : 'bg-green-100 text-green-800 border border-green-200';
+            ?>
+            <div class="p-4 rounded-md <?= $flashStyles ?>">
+                <?= h($flash_message) ?>
             </div>
-        <?php else: ?>
+        <?php endif; ?>
 
-            <div class="bg-white rounded-lg shadow-md p-6 mb-10 border-l-4 border-blue-600">
-                <h2 class="text-xl font-semibold text-gray-800 mb-5 flex items-center gap-2">
-                    <span data-feather="user-plus" class="text-blue-600"></span>
-                    Add Member to Team
-                </h2>
+        <?php if (!empty($generated_invite_link)): ?>
+            <div
+                class="p-4 rounded-md border border-indigo-200 bg-indigo-50 text-sm text-indigo-900 flex flex-col gap-1 relative">
+                <span class="font-semibold flex items-center gap-2 pr-24">
+                    Invite Link
+                </span>
+                <a href="<?= h($generated_invite_link) ?>" target="_blank"
+                    class="break-all text-indigo-700 hover:text-indigo-900">
+                    <?= h($generated_invite_link) ?>
+                </a>
+                <span class="text-xs text-slate-500">Share this link with reps to let them request access.</span>
+                <button type="button"
+                    class="flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition text-xs font-medium copy-invite-link absolute bottom-4 right-4"
+                    data-copy="<?= h($generated_invite_link) ?>" aria-label="Copy invite link">
+                    <span data-feather="copy"></span>
+                    Copy
+                </button>
+            </div>
+        <?php endif; ?>
 
-                <form id="addMemberForm" method="post" class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <div>
-                        <label for="teamSelect" class="block text-sm font-medium text-gray-700 mb-1">1. Select Team</label>
-                        <select name="team_id" id="teamSelect" required
-                            class="w-full border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="">-- Select a Team --</option>
-                            <?php foreach ($teams as $t): ?>
-                                <option value="<?= $t['team_id'] ?>"><?= htmlspecialchars($t['team_name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="relative">
-                        <label for="repSearch" class="block text-sm font-medium text-gray-700 mb-1">2. Find Rep</label>
-                        <input type="text" id="repSearch" placeholder="Search by name or username..."
-                            class="w-full border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500"
-                            autocomplete="off">
-                        <div id="repResults"
-                            class="absolute top-full left-0 w-full bg-white border border-gray-300 rounded-b-md shadow-lg hidden z-10 max-h-60 overflow-y-auto">
-                        </div>
-                        <input type="hidden" name="member_id" id="selectedRepId">
-                        <input type="hidden" name="action" value="add_member">
-                    </div>
-
-                    <button type="submit" name="add_member"
-                        class="bg-blue-600 text-white px-5 py-2 rounded-md shadow-sm hover:bg-blue-700 transition w-full md:w-auto h-10">
-                        Add Member
+        <section class="bg-white rounded-xl shadow-sm border border-slate-200">
+            <div class="p-6 border-b border-slate-200 flex items-center justify-between flex-wrap gap-3">
+                <div>
+                    <h2 class="text-xl font-semibold text-slate-900 flex items-center gap-2">
+                        <span data-feather="help-circle" class="text-indigo-600"></span>
+                        Pending Requests
+                    </h2>
+                    <p class="text-sm text-slate-500">
+                        Reps who used your invite links appear here. Approve to place them into Agency 1 or Agency 2.
+                    </p>
+                </div>
+                <form method="post" class="flex items-center gap-2">
+                    <input type="hidden" name="action" value="generate_link">
+                    <label for="generate-agency-id" class="sr-only">Select agency</label>
+                    <select id="generate-agency-id" name="agency_id"
+                        class="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        required>
+                        <option value="">Select agency</option>
+                        <?php foreach ($agencies as $agencyOption): ?>
+                            <option value="<?= h((string) $agencyOption['id']) ?>">
+                                <?= h($agencyOption['agency_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="submit"
+                        class="inline-flex items-center justify-center px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition">
+                        Generate invite link
                     </button>
                 </form>
             </div>
 
-            <h2 class="text-2xl font-semibold text-gray-800 mb-6">Your Teams</h2>
-            <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                <?php foreach ($teams as $t):
-                    $members = fetch_team_members($mysqli, $t['team_id']); ?>
-
-                    <div class="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow overflow-hidden"
-                        id="team-card-<?= $t['team_id'] ?>">
-                        <div class="p-5 border-b border-gray-200">
-                            <div class="flex justify-between items-center">
-                                <h3 class="text-lg font-semibold text-blue-800"><?= htmlspecialchars($t['team_name']) ?></h3>
-                                <span class="text-sm font-mono text-gray-400">ID: <?= $t['team_id'] ?></span>
+            <?php if (empty($pendingRequests)): ?>
+                <div class="p-6 text-slate-500 text-sm">
+                    No pending requests right now. Share an invite link to let reps request access.
+                </div>
+            <?php else: ?>
+                <ul class="divide-y divide-slate-200">
+                    <?php foreach ($pendingRequests as $request): ?>
+                        <li class="p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div class="flex-1">
+                                <p class="text-base font-semibold text-slate-900">
+                                    <?= h(trim(($request['first_name'] ?? '') . ' ' . ($request['last_name'] ?? ''))) ?>
+                                    <?php if (!empty($request['username'])): ?>
+                                        <span class="text-sm text-slate-500">@<?= h($request['username']) ?></span>
+                                    <?php endif; ?>
+                                </p>
+                                <?php if (!empty($request['email'])): ?>
+                                    <p class="text-sm text-slate-500"><?= h($request['email']) ?></p>
+                                <?php endif; ?>
+                                <p class="text-sm text-slate-600 mt-1">
+                                    Requested: <?= h($request['agency_name']) ?>
+                                    <?php if (!empty($request['created_at'])): ?>
+                                        • <?= h(date('M d, Y g:i A', strtotime($request['created_at']))) ?>
+                                    <?php endif; ?>
+                                </p>
                             </div>
-                            <p class="text-sm text-gray-500">
-                                <span data-feather="users" class="w-4 h-4 inline-block -mt-1"></span>
-                                <span id="member-count-<?= $t['team_id'] ?>"><?= count($members) ?></span> Members
-                            </p>
-                        </div>
+                            <div class="flex items-center gap-2">
+                                <a href="approve_invite.php?id=<?= $request['id'] ?>&action=accept"
+                                    class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition">
+                                    <span data-feather="check"></span>
+                                    Approve
+                                </a>
+                                <a href="approve_invite.php?id=<?= $request['id'] ?>&action=reject"
+                                    class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 transition">
+                                    <span data-feather="x"></span>
+                                    Decline
+                                </a>
+                            </div>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </section>
 
-                        <div class="p-5 bg-gray-50">
-                            <h4 class="text-sm font-semibold text-gray-700 mb-3">Members</h4>
-
-                            <p id="no-members-msg-<?= $t['team_id'] ?>"
-                                class="text-gray-500 text-sm <?= empty($members) ? '' : 'hidden' ?>">
-                                No members in this team yet.
-                            </p>
-
-                            <ul id="member-list-<?= $t['team_id'] ?>" class="text-gray-800 text-sm space-y-2">
-                                <?php foreach ($members as $m): ?>
-                                    <li class="member-item flex justify-between items-center border-b border-gray-200 py-2"
-                                        id="member-<?= $m['id'] ?>-in-team-<?= $t['team_id'] ?>">
-
-                                        <span class="flex flex-col">
-                                            <?= htmlspecialchars($m['first_name'] . ' ' . $m['last_name']) ?>
-                                            <span class="text-xs text-gray-500">@<?= htmlspecialchars($m['username']) ?></span>
-                                        </span>
-
-                                        <form method="post" class="remove-member-form">
-                                            <input type="hidden" name="rm_team_id" value="<?= $t['team_id'] ?>">
-                                            <input type="hidden" name="rm_member_id" value="<?= $m['id'] ?>">
-                                            <input type="hidden" name="action" value="remove_member">
-                                            <button type="submit" title="Remove member"
-                                                class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100">
-                                                <span data-feather="x" class="w-4 h-4"></span>
-                                            </button>
-                                        </form>
-                                    </li>
-                                <?php endforeach; ?>
-                            </ul>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
+        <section class="space-y-6">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+                <h2 class="text-2xl font-semibold text-slate-900">Your Agencies</h2>
+                <p class="text-sm text-slate-500">
+                    Each rep can only belong to one of your agencies at a time.
+                </p>
             </div>
 
-        <?php endif; ?>
-    </div>
+            <?php if (empty($agencies)): ?>
+                <div class="bg-white border border-slate-200 rounded-xl p-6 text-center text-slate-500">
+                    Agencies not found. Please contact an administrator.
+                </div>
+            <?php else: ?>
+                <div class="grid gap-6 md:grid-cols-2">
+                    <?php foreach ($agencies as $agency): ?>
+                        <article class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                            <header class="p-6 border-b border-slate-200 bg-slate-50">
+                                <div class="flex items-center justify-between gap-3">
+                                    <h3 class="text-lg font-semibold text-indigo-700"><?= h($agency['agency_name']) ?></h3>
+                                    <span class="text-xs uppercase tracking-wide text-slate-500">
+                                        ID: <?= h((string) $agency['id']) ?>
+                                    </span>
+                                </div>
+                                <p class="text-sm text-slate-500 mt-1">
+                                    <?= count($agency['members']) ?> member<?= count($agency['members']) === 1 ? '' : 's' ?>
+                                </p>
+                            </header>
+
+                            <div class="p-6 space-y-4">
+                                <?php if (empty($agency['members'])): ?>
+                                    <p class="text-sm text-slate-500">
+                                        No reps assigned yet. Approve a pending request to place them here.
+                                    </p>
+                                <?php else: ?>
+                                    <ul class="space-y-3">
+                                        <?php foreach ($agency['members'] as $member): ?>
+                                            <li
+                                                class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border border-slate-200 rounded-md px-4 py-3">
+                                                <div>
+                                                    <p class="font-semibold text-slate-900">
+                                                        <?= h(trim($member['first_name'] . ' ' . $member['last_name'])) ?>
+                                                    </p>
+                                                    <p class="text-sm text-slate-500">
+                                                        @<?= h($member['username']) ?>
+                                                        <?php if (!empty($member['email'])): ?>
+                                                            • <?= h($member['email']) ?>
+                                                        <?php endif; ?>
+                                                    </p>
+                                                </div>
+                                                <form method="post" class="flex items-center gap-2">
+                                                    <input type="hidden" name="action" value="remove_member">
+                                                    <input type="hidden" name="agency_id" value="<?= h((string) $agency['id']) ?>">
+                                                    <input type="hidden" name="member_id" value="<?= h((string) $member['id']) ?>">
+
+                                                </form>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php endif; ?>
+                            </div>
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </section>
+    </main>
 
     <script>
         feather.replace();
 
-        // --- Notification Function ---
-        const notificationArea = document.getElementById('notification');
-        function showNotification(message, isSuccess = true) {
-            const bgColor = isSuccess ? 'bg-green-600' : 'bg-red-600';
-            const notification = document.createElement('div');
-            notification.className = `p-4 ${bgColor} text-white rounded-md shadow-lg mb-2 transition-all transform translate-x-full`;
-            notification.innerText = message;
+        document.querySelectorAll('.copy-invite-link').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const value = button.getAttribute('data-copy') ?? '';
 
-            notificationArea.appendChild(notification);
-
-            // Animate in
-            setTimeout(() => {
-                notification.classList.remove('translate-x-full');
-            }, 10);
-
-            // Animate out
-            setTimeout(() => {
-                notification.classList.add('translate-x-full');
-                setTimeout(() => notification.remove(), 300);
-            }, 3000);
-        }
-
-        // --- AJAX Rep Search ---
-        const searchBox = document.getElementById('repSearch');
-        const resultsBox = document.getElementById('repResults');
-        const hiddenInput = document.getElementById('selectedRepId');
-
-        searchBox.addEventListener('input', function () {
-            const q = this.value.trim();
-            hiddenInput.value = ''; // Clear selection on new input
-            if (q.length < 2) {
-                resultsBox.classList.add('hidden');
-                return;
-            }
-
-            fetch('?search_reps=' + encodeURIComponent(q))
-                .then(res => res.json())
-                .then(data => {
-                    if (data.length === 0) {
-                        resultsBox.innerHTML = "<div class='p-3 text-gray-500'>No matches found</div>";
-                    } else {
-                        resultsBox.innerHTML = data.map(u =>
-                            `<div class='p-3 hover:bg-blue-50 cursor-pointer' 
-                                data-id="${u.id}" 
-                                data-name="${u.first_name} ${u.last_name} (@${u.username})">
-                                ${u.first_name} ${u.last_name} <span class='text-gray-500 text-sm'>(${u.username})</span>
-                            </div>`
-                        ).join('');
-                    }
-                    resultsBox.classList.remove('hidden');
-                });
-        });
-
-        // Click handler for search results
-        resultsBox.addEventListener('click', function (e) {
-            const div = e.target.closest('div[data-id]');
-            if (div) {
-                selectRep(div.dataset.id, div.dataset.name);
-            }
-        });
-
-        function selectRep(id, name) {
-            searchBox.value = name;
-            hiddenInput.value = id;
-            resultsBox.classList.add('hidden');
-        }
-
-        // Close results if clicking outside
-        document.addEventListener('click', function (e) {
-            if (!searchBox.contains(e.target) && !resultsBox.contains(e.target)) {
-                resultsBox.classList.add('hidden');
-            }
-        });
-
-        // --- AJAX Form Handling (Add & Remove) ---
-        document.addEventListener('submit', function (e) {
-
-            // --- Handle Add Member ---
-            if (e.target.id === 'addMemberForm') {
-                e.preventDefault();
-                const form = e.target;
-                const formData = new FormData(form);
-
-                fetch(window.location.href, {
-                    method: 'POST',
-                    body: formData
-                })
-                    .then(res => res.json())
-                    .then(data => {
-                        showNotification(data.message, data.success);
-                        if (data.success) {
-                            // Reset the form
-                            form.reset();
-                            hiddenInput.value = '';
-
-                            // Add new member to the list
-                            addMemberToCard(data.team_id, data.new_member);
-                        }
-                    })
-                    .catch(err => console.error('Error:', err));
-            }
-
-            // --- Handle Remove Member ---
-            if (e.target.classList.contains('remove-member-form')) {
-                e.preventDefault();
-                if (!confirm('Are you sure you want to remove this member?')) {
-                    return;
+                try {
+                    await navigator.clipboard.writeText(value);
+                    button.textContent = 'Copied!';
+                    setTimeout(() => {
+                        button.innerHTML = '<span data-feather="copy"></span>Copy';
+                        feather.replace();
+                    }, 1500);
+                } catch (error) {
+                    console.error('Failed to copy invite link', error);
+                    button.textContent = 'Try again';
+                    setTimeout(() => {
+                        button.innerHTML = '<span data-feather="copy"></span>Copy';
+                        feather.replace();
+                    }, 1500);
                 }
-
-                const form = e.target;
-                const formData = new FormData(form);
-
-                fetch(window.location.href, {
-                    method: 'POST',
-                    body: formData
-                })
-                    .then(res => res.json())
-                    .then(data => {
-                        showNotification(data.message, data.success);
-                        if (data.success) {
-                            // Remove member from the list
-                            removeMemberFromCard(data.team_id, data.member_id);
-                        }
-                    })
-                    .catch(err => console.error('Error:', err));
-            }
-        });
-
-        // --- DOM Update Functions ---
-        function addMemberToCard(team_id, member) {
-            const memberList = document.getElementById(`member-list-${team_id}`);
-            const noMsg = document.getElementById(`no-members-msg-${team_id}`);
-            const countSpan = document.getElementById(`member-count-${team_id}`);
-
-            if (!memberList) return;
-
-            // Hide the "no members" message
-            if (noMsg) noMsg.classList.add('hidden');
-
-            // Create new member list item
-            const li = document.createElement('li');
-            li.className = 'member-item flex justify-between items-center border-b border-gray-200 py-2';
-            li.id = `member-${member.id}-in-team-${team_id}`;
-            li.innerHTML = `
-                <span class="flex flex-col">
-                    ${escapeHTML(member.first_name + ' ' + member.last_name)}
-                    <span class="text-xs text-gray-500">@${escapeHTML(member.username)}</span>
-                </span>
-                <form method="post" class="remove-member-form">
-                    <input type="hidden" name="rm_team_id" value="${team_id}">
-                    <input type="hidden" name="rm_member_id" value="${member.id}">
-                    <input type="hidden" name="action" value="remove_member">
-                    <button type="submit" title="Remove member" class="text-red-500 hover:text-red-700 p-1 rounded-full hover:bg-red-100">
-                        <span data-feather="x" class="w-4 h-4"></span>
-                    </button>
-                </form>
-            `;
-
-            memberList.appendChild(li);
-            feather.replace(); // Redraw the new 'x' icon
-
-            // Update count
-            countSpan.innerText = memberList.children.length;
-        }
-
-        function removeMemberFromCard(team_id, member_id) {
-            const memberItem = document.getElementById(`member-${member_id}-in-team-${team_id}`);
-            const memberList = document.getElementById(`member-list-${team_id}`);
-            const noMsg = document.getElementById(`no-members-msg-${team_id}`);
-            const countSpan = document.getElementById(`member-count-${team_id}`);
-
-            if (memberItem) {
-                // Animate out
-                memberItem.classList.add('removing');
-                setTimeout(() => {
-                    memberItem.remove();
-
-                    // Check if list is now empty
-                    if (memberList.children.length === 0) {
-                        if (noMsg) noMsg.classList.remove('hidden');
-                    }
-                    // Update count
-                    countSpan.innerText = memberList.children.length;
-                }, 300);
-            }
-        }
-
-        function escapeHTML(str) {
-            return str.replace(/[&<>"']/g, function (m) {
-                return {
-                    '&': '&amp;',
-                    '<': '&lt;',
-                    '>': '&gt;',
-                    '"': '&quot;',
-                    "'": '&#039;'
-                }[m];
             });
-        }
-
+        });
     </script>
 </body>
 

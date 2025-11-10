@@ -5,6 +5,7 @@ requireLogin();
 
 // Optionally include your shared header for team leaders
 include 'leader_header.php';
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -25,8 +26,27 @@ include 'leader_header.php';
         </h1>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <!-- Add Sale -->
-
+            <a href="/ref/refs/add_sale.php"
+                class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
+                <div class="bg-blue-100 text-blue-700 rounded-full p-3 mr-4">
+                    <span data-feather="plus-circle" class="w-7 h-7"></span>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold group-hover:text-blue-600">Add a Sale</div>
+                    <div class="text-gray-500 text-sm">Log a new sale</div>
+                </div>
+            </a>
+            <!-- View Sales -->
+            <a href="/ref/refs/view_sales.php"
+                class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
+                <div class="bg-yellow-100 text-yellow-700 rounded-full p-3 mr-4">
+                    <span data-feather="file-text" class="w-7 h-7"></span>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold group-hover:text-yellow-600">View Sales</div>
+                    <div class="text-gray-500 text-sm">All your logged sales</div>
+                </div>
+            </a>
 
             <!-- View Team Sales -->
             <a href="view_team_sales.php"
@@ -87,6 +107,7 @@ include 'leader_header.php';
                     <div class="text-gray-500 text-sm">Track your monthly payouts and statuses</div>
                 </div>
             </a>
+
         </div>
     </div>
 

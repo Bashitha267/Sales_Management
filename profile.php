@@ -9,14 +9,14 @@ $user_id = $_SESSION['user_id'] ?? null;
 $user_role = $_SESSION['role'] ?? null;
 
 // Only allow rep, admin, or team leader
-$allowed_roles = ['rep', 'team leader', 'admin'];
+$allowed_roles = ['rep', 'representative', 'admin'];
 if (!$user_id || !in_array($user_role, $allowed_roles)) {
     header('Location: /ref/login.php');
     exit;
 }
 
 // If admin/team leader, can view anyone's profile by ?id= param
-$view_id = ($user_role === 'admin' || $user_role === 'team leader') && isset($_GET['id'])
+$view_id = ($user_role === 'admin' || $user_role === 'representative') && isset($_GET['id'])
     ? (int) $_GET['id']
     : (int) $user_id;
 
@@ -134,7 +134,7 @@ if ($user_role === 'admin') {
     include 'admin_header.php';
 } else if ($user_role === 'rep') {
     include 'refs/refs_header.php';
-} else if ($user_role === 'team leader') {
+} else if ($user_role === 'representative') {
     include 'leader/leader_header.php';
 }
 ?>
@@ -315,10 +315,7 @@ if ($user_role === 'admin') {
                     <span><?= htmlspecialchars($user['account_holder'] ?? '-') ?></span>
                 </div>
             </div>
-            <a href="<?= ($user_role === 'admin') ? '/ref/admin_dashboard.php' : '/ref/refs/ref_dashboard.php' ?>"
-                class="inline-block px-6 py-2 bg-gray-100 text-slate-700 rounded hover:bg-gray-200 transition font-semibold">
-                Back to Dashboard
-            </a>
+
         <?php endif; ?>
 
     </div>

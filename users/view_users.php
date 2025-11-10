@@ -11,7 +11,7 @@ require_once '../config.php';
 
 // --- Count statistics ---
 $admin_count = $mysqli->query("SELECT COUNT(*) AS c FROM users WHERE role = 'admin'")->fetch_assoc()['c'];
-$leader_count = $mysqli->query("SELECT COUNT(*) AS c FROM users WHERE role = 'team leader'")->fetch_assoc()['c'];
+$leader_count = $mysqli->query("SELECT COUNT(*) AS c FROM users WHERE role = 'representative'")->fetch_assoc()['c'];
 $rep_count = $mysqli->query("SELECT COUNT(*) AS c FROM users WHERE role = 'rep'")->fetch_assoc()['c'];
 
 // --- Search logic ---
@@ -84,7 +84,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1') {
                 </div>
 
                 <div class="bg-amber-100 text-amber-800 p-6 rounded-xl shadow hover:shadow-md transition">
-                    <h3 class="text-lg font-semibold">Team Leaders</h3>
+                    <h3 class="text-lg font-semibold">Representatives</h3>
                     <p class="text-3xl font-bold mt-2"><?= $leader_count ?></p>
                 </div>
 

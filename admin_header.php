@@ -4,6 +4,8 @@ if (!isset($_SESSION)) {
     session_start();
 }
 
+$userId = isset($_SESSION['user_id']) ? htmlspecialchars((string) $_SESSION['user_id']) : null;
+
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     header('Location: /ref/login.php');
     exit;
@@ -16,9 +18,16 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     -->
     <div class="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
         <!-- Left: Title -->
-        <h1 class="text-2xl font-bold tracking-wide">
-            Admin Dashboard
-        </h1>
+        <div class="flex flex-col items-center sm:items-start">
+            <h1 class="text-2xl font-bold tracking-wide">
+                Admin Dashboard
+            </h1>
+            <?php if ($userId !== null): ?>
+                <span class="text-sm text-indigo-100">
+                    User ID: <?php echo $userId; ?>
+                </span>
+            <?php endif; ?>
+        </div>
 
         <!-- Right: Buttons -->
         <!-- 

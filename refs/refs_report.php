@@ -15,44 +15,47 @@ $cur_year = isset($_GET['year']) ? intval($_GET['year']) : (int) date('Y');
 
 // --- Get available years for this user ---
 $years = [];
-$q = $mysqli->prepare("SELECT DISTINCT YEAR(sale_date) AS y FROM sales_log WHERE ref_id = ? ORDER BY y DESC");
-$q->bind_param('i', $user_id);
-$q->execute();
-$res = $q->get_result();
-while ($row = $res->fetch_assoc()) {
-    $years[] = (int) $row['y'];
+$yearStmt = $mysqli->prepare("SELECT DISTINCT YEAR(sale_date) AS y FROM sales WHERE rep_user_id = ? ORDER BY y DESC");
+if ($yearStmt) {
+    $yearStmt->bind_param('i', $user_id);
+    $yearStmt->execute();
+    $res = $yearStmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $years[] = (int) $row['y'];
+    }
+    $yearStmt->close();
 }
-$q->close();
-if (empty($years))
+if (empty($years)) {
     $years[] = (int) date('Y');
-
-// --- Get item points map ---
-$item_points_map = [];
-$item_q = $mysqli->query("SELECT item_code, points_leader, points_rep FROM items");
-while ($i = $item_q->fetch_assoc()) {
-    $item_points_map[$i['item_code']] = (int) $i['points_rep'];
 }
-$item_q->close();
 
 // --- Calculate personal monthly points ---
-$stmt = $mysqli->prepare("
-    SELECT MONTH(sl.sale_date) AS month, sd.item_code, SUM(sd.qty) AS qty
-    FROM sales_log sl
-    JOIN sale_details sd ON sl.sale_id = sd.sale_id
-    WHERE sl.ref_id = ? AND YEAR(sl.sale_date) = ?
-    GROUP BY month, sd.item_code
-");
-$stmt->bind_param('ii', $user_id, $cur_year);
-$stmt->execute();
-$result = $stmt->get_result();
-
 $monthly_points = [];
-while ($r = $result->fetch_assoc()) {
-    $m = (int) $r['month'];
-    $points = ($item_points_map[$r['item_code']] ?? 0) * (int) $r['qty'];
-    $monthly_points[$m] = ($monthly_points[$m] ?? 0) + $points;
+$monthly_sales_count = [];
+
+$pointsStmt = $mysqli->prepare("
+    SELECT
+        MONTH(s.sale_date) AS month,
+        SUM(si.quantity * COALESCE(i.rep_points, 0)) AS total_points,
+        COUNT(DISTINCT s.id) AS sales_count
+    FROM sales s
+    JOIN sale_items si ON si.sale_id = s.id
+    LEFT JOIN items i ON i.id = si.item_id
+    WHERE s.rep_user_id = ? AND YEAR(s.sale_date) = ?
+    GROUP BY month
+");
+
+if ($pointsStmt) {
+    $pointsStmt->bind_param('ii', $user_id, $cur_year);
+    $pointsStmt->execute();
+    $result = $pointsStmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $month = (int) $row['month'];
+        $monthly_points[$month] = (int) ($row['total_points'] ?? 0);
+        $monthly_sales_count[$month] = (int) ($row['sales_count'] ?? 0);
+    }
+    $pointsStmt->close();
 }
-$stmt->close();
 
 $months = [
     1 => 'January',
@@ -98,7 +101,7 @@ $months = [
                     <tr>
                         <th class="px-6 py-3">Month</th>
                         <th class="px-6 py-3 text-right">Total Points</th>
-                        <th class="px-6 py-3 text-center">Payment Status</th>
+                        <th class="px-6 py-3 text-center">Sales Count</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
@@ -106,19 +109,19 @@ $months = [
                     $grand_total = 0;
                     foreach ($months as $num => $name):
                         $points = $monthly_points[$num] ?? 0;
+                        $salesCount = $monthly_sales_count[$num] ?? 0;
                         $grand_total += $points;
-                        $status = ($points > 0) ? (rand(0, 1) ? "Paid" : "Not Paid") : "-";
                         ?>
                         <tr class="<?= $points > 0 ? 'bg-blue-50' : '' ?>">
                             <td class="px-6 py-3 font-medium"><?= $name ?></td>
                             <td class="px-6 py-3 text-right font-semibold text-blue-700"><?= $points ?></td>
-                            <td class="px-6 py-3 text-center"><?= $status ?></td>
+                            <td class="px-6 py-3 text-center"><?= $salesCount ?></td>
                         </tr>
                     <?php endforeach; ?>
                     <tr class="bg-blue-200 font-bold">
                         <td class="px-6 py-3 text-right">Total</td>
                         <td class="px-6 py-3 text-right text-blue-900"><?= $grand_total ?></td>
-                        <td class="px-6 py-3 text-center">—</td>
+                        <td class="px-6 py-3 text-center"><?= array_sum($monthly_sales_count) ?></td>
                     </tr>
                 </tbody>
             </table>
