@@ -62,34 +62,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $delete->close();
         set_flash_and_redirect('Representative was not found in that agency.', 'error');
     } elseif ($action === 'generate_link') {
-        $agency_id = intval($_POST['agency_id'] ?? 0);
-
-        if ($agency_id <= 0) {
-            set_flash_and_redirect('Please choose a valid agency.', 'error');
-        }
-
-        $checkAgency = $mysqli->prepare("SELECT 1 FROM agencies WHERE id = ? AND representative_id = ?");
-        $checkAgency->bind_param("ii", $agency_id, $representative_id);
-        $checkAgency->execute();
-        $ownsAgency = $checkAgency->get_result()->num_rows > 0;
-        $checkAgency->close();
-
-        if (!$ownsAgency) {
-            set_flash_and_redirect('You do not have permission to manage that agency.', 'error');
-        }
-
+        // Generate link with only representative_id (no agency selection needed)
         try {
             $token = bin2hex(random_bytes(16));
         } catch (Exception $e) {
             set_flash_and_redirect('Unable to generate invite token. Please try again.', 'error');
         }
 
-        $insert = $mysqli->prepare("INSERT INTO agency_invites (representative_id, agency_id, token) VALUES (?, ?, ?)");
+        // Insert invite with representative_id only (agency_id will be NULL, set later in add_new_reps.php)
+        // Note: agency_id is nullable and will be set to NULL by default
+        $insert = $mysqli->prepare("INSERT INTO agency_invites (representative_id, token) VALUES (?, ?)");
         if (!$insert) {
             set_flash_and_redirect('Failed to prepare invite creation. Please try again.', 'error');
         }
 
-        $insert->bind_param("iis", $representative_id, $agency_id, $token);
+        $insert->bind_param("is", $representative_id, $token);
         if ($insert->execute()) {
             $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
             $host = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? 'localhost');
@@ -189,9 +176,12 @@ $requestStmt = $mysqli->prepare("
            u.first_name,
            u.last_name,
            u.username,
-           u.email
+           u.email,
+           u.nic_number,
+           u.contact_number,
+           u.age
     FROM agency_invites ai
-    INNER JOIN agencies ag ON ag.id = ai.agency_id
+    LEFT JOIN agencies ag ON ag.id = ai.agency_id
     LEFT JOIN users u ON u.id = ai.rep_user_id
     WHERE ai.representative_id = ?
       AND ai.status = 'pending'
@@ -203,7 +193,7 @@ $requestStmt->execute();
 $pendingRequests = $requestStmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $requestStmt->close();
 
-$mysqli->close();
+// $mysqli->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -267,22 +257,12 @@ $mysqli->close();
                         Pending Requests
                     </h2>
                     <p class="text-sm text-slate-500">
-                        Reps who used your invite links appear here. Approve to place them into Agency 1 or Agency 2.
+                        New reps who registered using your invite links appear here. Click on a request to complete
+                        their setup (set username, password, and assign agency).
                     </p>
                 </div>
                 <form method="post" class="flex items-center gap-2">
                     <input type="hidden" name="action" value="generate_link">
-                    <label for="generate-agency-id" class="sr-only">Select agency</label>
-                    <select id="generate-agency-id" name="agency_id"
-                        class="border border-slate-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        required>
-                        <option value="">Select agency</option>
-                        <?php foreach ($agencies as $agencyOption): ?>
-                            <option value="<?= h((string) $agencyOption['id']) ?>">
-                                <?= h($agencyOption['agency_name']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
                     <button type="submit"
                         class="inline-flex items-center justify-center px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition">
                         Generate invite link
@@ -309,17 +289,26 @@ $mysqli->close();
                                     <p class="text-sm text-slate-500"><?= h($request['email']) ?></p>
                                 <?php endif; ?>
                                 <p class="text-sm text-slate-600 mt-1">
-                                    Requested: <?= h($request['agency_name']) ?>
+                                    <?php if (!empty($request['agency_name'])): ?>
+                                        Agency: <?= h($request['agency_name']) ?> •
+                                    <?php else: ?>
+                                        Agency: Not assigned yet •
+                                    <?php endif; ?>
                                     <?php if (!empty($request['created_at'])): ?>
-                                        • <?= h(date('M d, Y g:i A', strtotime($request['created_at']))) ?>
+                                        <?= h(date('M d, Y g:i A', strtotime($request['created_at']))) ?>
                                     <?php endif; ?>
                                 </p>
+                                <?php if (empty($request['username'])): ?>
+                                    <p class="text-xs text-amber-600 mt-1 font-medium">
+                                        ⚠️ Setup required: Username and password not set
+                                    </p>
+                                <?php endif; ?>
                             </div>
                             <div class="flex items-center gap-2">
-                                <a href="approve_invite.php?id=<?= $request['id'] ?>&action=accept"
-                                    class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition">
-                                    <span data-feather="check"></span>
-                                    Approve
+                                <a href="add_new_reps.php?id=<?= $request['id'] ?>"
+                                    class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition">
+                                    <span data-feather="user-plus"></span>
+                                    Complete Setup
                                 </a>
                                 <a href="approve_invite.php?id=<?= $request['id'] ?>&action=reject"
                                     class="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 transition">

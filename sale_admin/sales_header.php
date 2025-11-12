@@ -1,63 +1,45 @@
 <?php
-// Ensure the user is logged in
-if (!isset($_SESSION)) {
+// --- Session Start ---
+// Start session only if it hasn't been started yet
+if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// 1. Check user role
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'rep') {
+// --- Security Check ---
+// Redirects to login if user is not logged in or is not a sale_admin or admin
+if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || ($_SESSION['role'] !== 'sale_admin' && $_SESSION['role'] !== 'admin')) {
     header('Location: /ref/login.php');
     exit;
 }
 
-// 2. Include database connection
-if (!isset($mysqli) || !($mysqli instanceof mysqli)) {
-    require_once '../config.php'; // Path fixed to go up one directory
-}
-
-// --- Get Rep Details ---
-$rep_user_id = $_SESSION['user_id'] ?? 0;
-$rep_username = isset($_SESSION['username']) ? htmlspecialchars((string) $_SESSION['username']) : 'Rep';
-
-// --- Fetch Rep's full name ---
-$rep_details = null;
-if ($rep_user_id > 0 && isset($mysqli)) {
-    // Assumes reps are also in the 'users' table
-    $stmt = $mysqli->prepare("SELECT id, first_name, last_name FROM users WHERE id = ? AND role = 'rep'");
-    if ($stmt) {
-        $stmt->bind_param('i', $rep_user_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $rep_details = $result->fetch_assoc();
-        $stmt->close();
-    }
-}
+// --- Get User Details from Session ---
+// All user information is stored in session during login (see auth.php)
+$sale_admin_user_id = (int) $_SESSION['user_id'];
+$sale_admin_username = isset($_SESSION['username']) ? htmlspecialchars((string) $_SESSION['username']) : 'Sale Admin';
+$sale_admin_first_name = isset($_SESSION['first_name']) ? (string) $_SESSION['first_name'] : '';
+$sale_admin_last_name = isset($_SESSION['last_name']) ? (string) $_SESSION['last_name'] : '';
 
 // Set display name, falling back to username if name not found
-$rep_display_name = $rep_details ? htmlspecialchars($rep_details['first_name'] . ' ' . $rep_details['last_name']) : $rep_username;
-$rep_display_id = $rep_details ? htmlspecialchars($rep_details['id']) : $rep_user_id;
-
-// --- Logout Logic (copied from admin header) ---
-if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: /ref/login.php'); // Adjust path to your login page
-    exit;
-}
+$full_name = trim($sale_admin_first_name . ' ' . $sale_admin_last_name);
+$sale_admin_display_name = !empty($full_name)
+    ? htmlspecialchars($full_name)
+    : $sale_admin_username;
+$sale_admin_display_id = $sale_admin_user_id;
 ?>
 
-<nav class="bg-blue-600 text-white px-4 sm:px-6 py-3 shadow-md">
+<nav class="bg-teal-600 text-white px-4 sm:px-6 py-3 shadow-md">
     <div class="max-w-6xl mx-auto flex flex-row justify-between items-center">
 
-        <a href="/ref/refs/ref_dashboard.php" class="flex items-center gap-3 group">
+        <a href="/ref/sale_admin/sale_dashboard.php" class="flex items-center gap-3 group">
             <img src="/ref/public/logo.jpg" alt="Solenation Logo"
-                class="h-10 w-10 rounded-full border-2 border-blue-400 object-cover">
-            <h1 class="text-xl font-semibold group-hover:text-blue-100">Ref Dashboard</h1>
+                class="h-10 w-10 rounded-full border-2 border-teal-400 object-cover">
+            <h1 class="text-xl font-semibold group-hover:text-teal-100">Solenation </h1>
         </a>
 
         <div x-data="{ open: false }" @click.away="open = false" class="relative w-auto">
 
             <button @click="open = !open"
-                class="flex items-center justify-center w-auto hover:text-blue-100 transition duration-150 bg-blue-500 bg-opacity-0 hover:bg-opacity-50 p-2 rounded-full">
+                class="flex items-center justify-center w-auto hover:text-teal-100 transition duration-150 bg-teal-500 bg-opacity-0 hover:bg-opacity-50 p-2 rounded-full">
                 <img src="https://img.icons8.com/ios-glyphs/30/FFFFFF/user--v1.png" alt="User" class="w-5 h-5" />
             </button>
 
@@ -69,23 +51,22 @@ if (isset($_GET['logout'])) {
                 x-transition:leave-end="opacity-0 transform scale-95"
                 class="absolute right-0 mt-2 w-56 bg-white text-gray-700 rounded-md shadow-lg border z-50"
                 style="display: none;">
-
                 <div class="px-4 py-3 border-b">
-                    <p class="text-sm font-semibold text-gray-900 truncate" title="<?= $rep_display_name ?>">
-                        <?= $rep_display_name ?>
+                    <p class="text-sm font-semibold text-gray-900 truncate" title="<?= $sale_admin_display_name ?>">
+                        <?= $sale_admin_display_name ?>
                     </p>
                     <p class="text-xs text-gray-500">
-                        Rep ID: <?= $rep_display_id ?>
+                        Sale Admin ID: <?= $sale_admin_display_id ?>
                     </p>
                 </div>
 
                 <div class="py-1">
-                    <a href="profile.php" class="flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100">
+                    <a href="/ref/profile.php" class="flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100">
                         <img src="https://img.icons8.com/ios-glyphs/90/1A1A1A/user-male-circle.png" alt="User"
                             class="w-4 h-4 mr-2" />
                         Profile
                     </a>
-                    <a href="/ref/refs/ref_dashboard.php"
+                    <a href="/ref/sale_admin/sale_dashboard.php"
                         class="flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100">
                         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                             xmlns="http://www.w3.org/2000/svg">

@@ -28,79 +28,52 @@ $month_names = [
     12 => 'December'
 ];
 
-// --- 1️⃣ REPS’ SALES POINTS ---
+// --- 1️⃣ USER POINTS FROM points_ledger (FULL SALES ONLY) ---
+// We only consider FULL SALES (points_rep) and only UNREDEEMED points for this month
 $rep_points = [];
-$res = $mysqli->query("
-    SELECT sl.ref_id, SUM(sd.qty * i.points_rep) AS total_points
-    FROM sales_log sl
-    JOIN sale_details sd ON sl.sale_id = sd.sale_id
-    JOIN items i ON sd.item_code = i.item_code
-    WHERE YEAR(sl.sale_date) = $year AND MONTH(sl.sale_date) = $month
-    GROUP BY sl.ref_id
+// MODIFIED: Joined with sales table
+$stmt = $mysqli->prepare("
+    SELECT pl.rep_user_id, SUM(pl.points_rep) AS total_points
+    FROM points_ledger pl
+    INNER JOIN sales s ON pl.sale_id = s.id
+    WHERE pl.redeemed = 0
+      AND YEAR(pl.sale_date) = ?
+      AND MONTH(pl.sale_date) = ?
+      AND s.sale_type = 'full'
+    GROUP BY pl.rep_user_id
 ");
+$stmt->bind_param('ii', $year, $month);
+$stmt->execute();
+$res = $stmt->get_result();
 while ($r = $res->fetch_assoc()) {
-    $rep_points[$r['ref_id']] = (int) $r['total_points'];
+    $rep_points[$r['rep_user_id']] = (int) $r['total_points'];
 }
+$stmt->close();
 
 // --- 2️⃣ GET USERS ---
 $users = [];
-$res = $mysqli->query("SELECT id, first_name, last_name, role FROM users WHERE role IN ('rep','team leader')");
+$res = $mysqli->query("SELECT id, first_name, last_name, role FROM users WHERE role IN ('rep','representative','team leader')");
 while ($u = $res->fetch_assoc()) {
     $users[$u['id']] = $u;
 }
 
-// --- 3️⃣ TEAM LEADER POINTS ---
-$leader_points = [];
-$teams = [];
-
-// Get team members grouped by leader
-$teamRes = $mysqli->query("
-    SELECT t.leader_id, tm.member_id 
-    FROM teams t 
-    JOIN team_members tm ON t.team_id = tm.team_id
-");
-while ($t = $teamRes->fetch_assoc()) {
-    $teams[$t['leader_id']][] = $t['member_id'];
-}
-
-// Calculate total points for each leader (team members’ sales * points_leader)
-foreach ($teams as $leader_id => $members) {
-    $total = 0;
-    foreach ($members as $mid) {
-        $res2 = $mysqli->query("
-            SELECT SUM(sd.qty * i.points_leader) AS pts
-            FROM sales_log sl
-            JOIN sale_details sd ON sl.sale_id = sd.sale_id
-            JOIN items i ON sd.item_code = i.item_code
-            WHERE sl.ref_id = $mid AND YEAR(sl.sale_date) = $year AND MONTH(sl.sale_date) = $month
-        ");
-        if ($r2 = $res2->fetch_assoc()) {
-            $total += (int) $r2['pts'];
-        }
-    }
-
-    // Add leader’s own sales (points_rep)
-    if (isset($rep_points[$leader_id])) {
-        $total += $rep_points[$leader_id];
-    }
-
-    if ($total > 0) {
-        $leader_points[$leader_id] = $total;
-    }
-}
-
-// Merge leader and rep data (leader overrides)
-$points_data = $rep_points;
-foreach ($leader_points as $lid => $pts) {
-    $points_data[$lid] = $pts;
-}
-
-// --- 4️⃣ PAYMENT STATUS ---
+// --- 3️⃣ PAYMENT STATUS (already paid this month?) ---
 $pay_status = [];
-$res = $mysqli->query("SELECT user_id, status FROM payments WHERE year=$year AND month=$month");
-while ($r = $res->fetch_assoc()) {
-    $pay_status[$r['user_id']] = $r['status'];
+$start_of_month = sprintf('%04d-%02d-01 00:00:00', $year, $month);
+$end_of_month = date('Y-m-t 23:59:59', strtotime(sprintf('%04d-%02d-01', $year, $month)));
+$stmtPaid = $mysqli->prepare("
+    SELECT user_id
+    FROM payments
+    WHERE payment_type = 'monthly'
+      AND paid_date BETWEEN ? AND ?
+");
+$stmtPaid->bind_param('ss', $start_of_month, $end_of_month);
+$stmtPaid->execute();
+$resPaid = $stmtPaid->get_result();
+while ($r = $resPaid->fetch_assoc()) {
+    $pay_status[$r['user_id']] = 'paid';
 }
+$stmtPaid->close();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -116,7 +89,6 @@ while ($r = $res->fetch_assoc()) {
     <div class="max-w-6xl mx-auto p-8">
         <h1 class="text-2xl font-bold text-blue-700 mb-6">Make Payments</h1>
 
-        <!-- 🔽 FILTER BAR -->
         <form method="GET" class="flex gap-4 mb-6">
             <select name="month" class="border rounded px-3 py-2">
                 <?php foreach ($month_names as $num => $name): ?>
@@ -133,11 +105,9 @@ while ($r = $res->fetch_assoc()) {
             <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Filter</button>
         </form>
 
-        <!-- 🔍 Search -->
         <input type="text" id="searchInput" placeholder="Search user name..."
             class="w-full border border-gray-300 rounded px-4 py-2 mb-4 focus:outline-none focus:ring focus:ring-blue-200">
 
-        <!-- 🧾 PAYMENT TABLE -->
         <table class="w-full bg-white shadow rounded-lg border-collapse" id="paymentTable">
             <thead class="bg-blue-100">
                 <tr>
@@ -153,8 +123,11 @@ while ($r = $res->fetch_assoc()) {
                 <?php foreach ($users as $u):
                     $uid = $u['id'];
                     $role = $u['role'];
-                    $points = $points_data[$uid] ?? 0;
-                    $amount = $points * 0.05;
+                    $points = $rep_points[$uid] ?? 0;
+                    if ($points <= 0 && !isset($pay_status[$uid])) {
+                        continue; // Show only users with pending points or already paid
+                    }
+                    $amount = $points * 0.1; // Rs per point
                     $status = $pay_status[$uid] ?? 'pending';
                     $rowClass = $status === 'paid' ? 'bg-green-100' : 'bg-red-100';
                     ?>
@@ -163,7 +136,7 @@ while ($r = $res->fetch_assoc()) {
                         </td>
                         <td class="px-4 py-2 text-center"><?= htmlspecialchars(ucfirst($role)) ?></td>
                         <td class="px-4 py-2 text-center"><?= number_format($points) ?></td>
-                        <td class="px-4 py-2 text-center">$<?= number_format($amount, 2) ?></td>
+                        <td class="px-4 py-2 text-center">Rs. <?= number_format($amount, 2) ?></td>
                         <td class="px-4 py-2 text-center">
                             <span
                                 class="status font-semibold <?= $status === 'paid' ? 'text-green-700' : 'text-red-700' ?>">
@@ -176,8 +149,7 @@ while ($r = $res->fetch_assoc()) {
                                     class="bg-gray-300 text-gray-600 px-4 py-1 rounded cursor-not-allowed">Paid</button>
                             <?php else: ?>
                                 <button class="pay-btn bg-green-600 text-white px-4 py-1 rounded hover:bg-green-700 transition"
-                                    data-id="<?= $uid ?>" data-points="<?= $points ?>" data-year="<?= $year ?>"
-                                    data-month="<?= $month ?>">
+                                    data-id="<?= $uid ?>" data-year="<?= $year ?>" data-month="<?= $month ?>">
                                     Mark as Paid
                                 </button>
                             <?php endif; ?>
@@ -203,14 +175,21 @@ while ($r = $res->fetch_assoc()) {
                 method: "POST",
                 data: {
                     user_id: btn.data("id"),
-                    points: btn.data("points"),
                     year: btn.data("year"),
                     month: btn.data("month")
                 },
+                dataType: "json",
                 success: function (res) {
+                    if (!res.success) {
+                        alert(res.error || 'Failed to mark as paid.');
+                        return;
+                    }
                     btn.closest("tr").removeClass("bg-red-100").addClass("bg-green-100");
                     btn.closest("tr").find(".status").removeClass("text-red-700").addClass("text-green-700").text("Paid");
                     btn.replaceWith('<button disabled class="bg-gray-300 text-gray-600 px-4 py-1 rounded cursor-not-allowed">Paid</button>');
+                },
+                error: function () {
+                    alert('An error occurred. Please try again.');
                 }
             });
         });

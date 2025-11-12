@@ -11,28 +11,33 @@ require_once("../config.php");
 // Handle AJAX search
 if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
     $search = trim($_GET['search'] ?? '');
-    $sql = "SELECT * FROM items";
-    $params = [];
-    $types = '';
-    if ($search !== '') {
-        $sql .= " WHERE item_code LIKE ? OR item_name LIKE ?";
-        $searchWildcard = '%' . $search . '%';
-        $params = [$searchWildcard, $searchWildcard];
-        $types = 'ss';
-    }
-    // FIXED: Changed created_at to id
-    $sql .= " ORDER BY id DESC";
-
-    $stmt = $mysqli->prepare($sql);
-    if ($params) {
-        $stmt->bind_param($types, ...$params);
-    }
-    $stmt->execute();
-    $result = $stmt->get_result();
     $items = [];
-    while ($row = $result->fetch_assoc()) {
-        $items[] = $row;
+
+    // Fetch all items if search is empty, otherwise filter by search term
+    if ($search === '') {
+        // Get all items
+        $sql = "SELECT * FROM items ORDER BY id DESC";
+        $stmt = $mysqli->prepare($sql);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $items[] = $row;
+        }
+        $stmt->close();
+    } else {
+        // Search items by code or name
+        $sql = "SELECT * FROM items WHERE item_code LIKE ? OR item_name LIKE ? ORDER BY id DESC";
+        $searchWildcard = '%' . $search . '%';
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('ss', $searchWildcard, $searchWildcard);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        while ($row = $result->fetch_assoc()) {
+            $items[] = $row;
+        }
+        $stmt->close();
     }
+
     header('Content-Type: application/json');
     echo json_encode($items);
     exit;
@@ -89,25 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_id']) && isset($
     exit;
 }
 
-// Normal page load: get all, possibly filtered
-$search = trim($_GET['search'] ?? '');
-$sql = "SELECT * FROM items";
-$params = [];
-$types = '';
-if ($search !== '') {
-    $sql .= " WHERE item_code LIKE ? OR item_name LIKE ?";
-    $searchWildcard = '%' . $search . '%';
-    $params = [$searchWildcard, $searchWildcard];
-    $types = 'ss';
-}
-// FIXED: Changed created_at to id
-$sql .= " ORDER BY id DESC";
-$stmt = $mysqli->prepare($sql);
-if ($params) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$result = $stmt->get_result();
+// Items are now loaded via AJAX by JavaScript
+// No need to query database here since JavaScript handles all rendering
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -136,69 +124,17 @@ $result = $stmt->get_result();
 
         <form method="get" id="searchForm" class="flex flex-col sm:flex-row gap-2 mb-8">
             <input type="text" name="search" id="searchInput" placeholder="Search by code or name..."
-                value="<?= htmlspecialchars($search) ?>"
                 class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
             <button type="submit"
                 class="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">Search</button>
         </form>
 
         <div id="itemsContainer" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-6">
-            <?php if ($result->num_rows > 0): ?>
-                <?php while ($row = $result->fetch_assoc()): ?>
-                    <div
-                        class="bg-white rounded-xl shadow hover:shadow-xl transition-all border-t-4 border-transparent hover:border-indigo-500 p-5 flex flex-col group/item relative">
-                        <div class="flex items-center mb-2">
-                            <img src="https://img.icons8.com/arcade/48/open-box--v1.png" alt="Item" class="w-8 h-8 mr-2">
-                            <span class="text-sm text-slate-400 font-mono ml-auto">#<?= $row['id'] ?></span>
-                        </div>
-                        <div class="mb-1">
-                            <span class="text-xs text-slate-500 uppercase tracking-wider">Item Code</span>
-                            <div class="font-semibold text-base text-indigo-700"><?= htmlspecialchars($row['item_code']) ?>
-                            </div>
-                        </div>
-                        <div class="mb-2">
-                            <span class="text-xs text-slate-500 uppercase tracking-wider">Item Name</span>
-                            <div class="text-lg font-bold text-slate-800"><?= htmlspecialchars($row['item_name']) ?></div>
-                        </div>
-                        <div class="flex items-center mb-2 gap-3">
-                            <span class="text-sm rounded-full bg-indigo-100 text-indigo-800 px-3 py-1 font-medium">
-                                Leader: <?= (int) $row['representative_points'] ?>
-                            </span>
-                            <span class="text-sm rounded-full bg-amber-100 text-amber-800 px-3 py-1 font-medium">
-                                Rep: <?= (int) $row['rep_points'] ?>
-                            </span>
-                        </div>
-                        <div class="mb-2">
-                            <span class="text-xs text-slate-500 uppercase tracking-wider">Price</span>
-                            <div class="text-lg font-bold text-black">
-                                Rs <?= number_format((float) $row['price'], 2, '.', ',') ?></div>
-                        </div>
-                        <div class="flex items-center justify-between mt-auto pt-2 gap-2">
-                            <button
-                                class="edit-btn px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm font-medium transition"
-                                data-id="<?= $row['id'] ?>" data-code="<?= htmlspecialchars($row['item_code'], ENT_QUOTES) ?>"
-                                data-name="<?= htmlspecialchars($row['item_name'], ENT_QUOTES) ?>"
-                                data-pl="<?= $row['representative_points'] ?>" data-pr="<?= $row['rep_points'] ?>"
-                                data-price="<?= htmlspecialchars($row['price'], ENT_QUOTES) ?>">
-                                Edit
-                            </button>
-                            <form method="post" class="inline" onsubmit="return confirm('Delete this item?');">
-                                <input type="hidden" name="delete_id" value="<?= $row['id'] ?>">
-                                <button type="submit"
-                                    class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-medium transition">Delete</button>
-                            </form>
-                        </div>
-                    </div>
-                <?php endwhile; ?>
-            <?php else: ?>
-                <div class="col-span-full flex flex-col items-center justify-center text-gray-500 py-16">
-                    <img src="https://img.icons8.com/arcade/64/open-box--v1.png" class="w-16 h-16 mb-3 opacity-50" />
-                    <p class="text-lg font-medium">No items found</p>
-                    <p class="text-sm mt-1">
-                        <?= $search !== '' ? 'Try a different search term.' : 'No items have been created yet.' ?>
-                    </p>
-                </div>
-            <?php endif; ?>
+            <!-- Items will be loaded via AJAX by JavaScript -->
+            <div class="col-span-full flex flex-col items-center justify-center text-gray-500 py-16">
+                <img src="https://img.icons8.com/arcade/64/open-box--v1.png" class="w-16 h-16 mb-3 opacity-50" />
+                <p class="text-lg font-medium">Loading items...</p>
+            </div>
         </div>
     </div>
 
@@ -297,7 +233,7 @@ $result = $stmt->get_result();
                     </div>
                     <div class="flex items-center justify-between mt-auto pt-2 gap-2">
                         <button 
-                            class="edit-btn px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm font-medium transition"
+                            class="edit-btn px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm font-medium transition"
                             data-id="${item.id}"
                             data-code="${escapeHtml(item.item_code)}"
                             data-name="${escapeHtml(item.item_name)}"
@@ -309,7 +245,7 @@ $result = $stmt->get_result();
                         </button>
                         <form method="post" class="inline" onsubmit="return confirm('Delete this item?');">
                             <input type="hidden" name="delete_id" value="${item.id}">
-                            <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-medium transition">Delete</button>
+                            <button type="submit" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-medium transition">Delete</button>
                         </form>
                     </div>
                 </div>
@@ -321,17 +257,21 @@ $result = $stmt->get_result();
                 <div class="col-span-full flex flex-col items-center justify-center text-gray-500 py-16">
                     <img src="https://img.icons8.com/arcade/64/open-box--v1.png" class="w-16 h-16 mb-3 opacity-50" />
                     <p class="text-lg font-medium">No items found</p>
-                    <p class="text-sm mt-1">
-                        ${searchTerm ? 'Try a different search term.' : 'No items have been created yet.'}
-                    </p>
+                    <p class="text-sm mt-1">${searchTerm ? 'Try a different search term.' : 'No items in database.'}</p>
                 </div>
                 `;
             }
 
             function fetchItems(searchTerm) {
+                // Always fetch items - all items if search is empty, filtered if search term provided
                 const url = new URL(window.location.href);
-                url.searchParams.set('search', searchTerm);
+                if (searchTerm) {
+                    url.searchParams.set('search', searchTerm);
+                } else {
+                    url.searchParams.delete('search');
+                }
                 url.searchParams.set('ajax', '1');
+
                 fetch(url.toString())
                     .then(response => response.json())
                     .then(items => {
@@ -344,19 +284,50 @@ $result = $stmt->get_result();
                             });
                             itemsContainer.innerHTML = cards;
                         }
+                    })
+                    .catch(() => {
+                        itemsContainer.innerHTML = showNoItemsMsg(searchTerm);
                     });
             }
+
+            // Load items on page load - fetch all items by default, or filtered if URL has search parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const initialSearch = urlParams.get('search') || '';
+            // Set search input value if URL has search parameter
+            if (initialSearch) {
+                searchInput.value = initialSearch;
+            }
+            // Always fetch items via AJAX on page load (all items if no search, filtered if search term exists)
+            fetchItems(initialSearch);
 
             searchInput.addEventListener('input', function (e) {
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
-                    fetchItems(e.target.value.trim());
+                    const searchTerm = e.target.value.trim();
+                    fetchItems(searchTerm);
+                    // Update URL without page reload
+                    const url = new URL(window.location.href);
+                    if (searchTerm) {
+                        url.searchParams.set('search', searchTerm);
+                    } else {
+                        url.searchParams.delete('search');
+                    }
+                    window.history.pushState({}, '', url);
                 }, 300);
             });
 
             document.getElementById('searchForm').addEventListener('submit', function (e) {
                 e.preventDefault();
-                fetchItems(searchInput.value.trim());
+                const searchTerm = searchInput.value.trim();
+                fetchItems(searchTerm);
+                // Update URL without page reload
+                const url = new URL(window.location.href);
+                if (searchTerm) {
+                    url.searchParams.set('search', searchTerm);
+                } else {
+                    url.searchParams.delete('search');
+                }
+                window.history.pushState({}, '', url);
             });
 
             // ********* Edit Modal Logic // Reusable for static and ajax-loaded cards *********
@@ -433,6 +404,6 @@ $result = $stmt->get_result();
 
 </html>
 <?php
-$stmt->close();
+// Close database connection
 $mysqli->close();
 ?>

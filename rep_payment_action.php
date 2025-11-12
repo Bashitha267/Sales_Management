@@ -25,10 +25,16 @@ if ($user_id <= 0 || !$start_date || !$end_date || !preg_match('/^\d{4}-\d{2}-\d
 $mysqli->begin_transaction();
 try {
     // 1. RE-CALCULATE points and amount on the server. DO NOT TRUST CLIENT.
+    // Query from points_ledger_rep table for rep points
     $stmt = $mysqli->prepare("
-        SELECT SUM(points_rep) AS total_points 
-        FROM points_ledger 
-        WHERE rep_user_id = ? AND redeemed = 0 AND sale_date BETWEEN ? AND ?
+        SELECT SUM(pl.points) AS total_points 
+        FROM points_ledger_rep pl
+        INNER JOIN sales s ON pl.sale_id = s.id
+        WHERE pl.rep_user_id = ? 
+          AND pl.redeemed = 0 
+          AND pl.sale_date BETWEEN ? AND ?
+          AND s.sale_type = 'full'
+          AND s.sale_approved = 1
     ");
     $stmt->bind_param('iss', $user_id, $start_date, $end_date);
     $stmt->execute();
@@ -42,7 +48,7 @@ try {
         throw new Exception("No unredeemed points found for this period. Payment may have already been processed.");
     }
 
-    $amount_to_pay = $points_to_pay * 0.01;
+    $amount_to_pay = $points_to_pay * 0.1;
     $remarks = "Weekly payment for $points_to_pay points (Period: $start_date to $end_date).";
 
     // 2. Insert a record into the payments table
@@ -51,10 +57,16 @@ try {
     $stmt->execute();
     $stmt->close();
 
-    // 3. Mark all unredeemed points *in that period* as redeemed
+    // 3. Mark all unredeemed points *in that period* as redeemed in points_ledger_rep
     $stmt = $mysqli->prepare("
-        UPDATE points_ledger SET redeemed = 1 
-        WHERE rep_user_id = ? AND redeemed = 0 AND sale_date BETWEEN ? AND ?
+        UPDATE points_ledger_rep pl
+        INNER JOIN sales s ON pl.sale_id = s.id
+        SET pl.redeemed = 1 
+        WHERE pl.rep_user_id = ? 
+          AND pl.redeemed = 0 
+          AND pl.sale_date BETWEEN ? AND ?
+          AND s.sale_type = 'full'
+          AND s.sale_approved = 1
     ");
     $stmt->bind_param('iss', $user_id, $start_date, $end_date);
     $stmt->execute();

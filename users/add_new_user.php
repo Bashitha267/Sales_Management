@@ -1,533 +1,361 @@
 <?php
-// 🟡 --- NEW AUTHORIZATION BLOCK --- 🟡
-session_start(); // Start the session right at the top
+// Session and role check
+session_start();
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    header('Location: /ref/login.php');
+    exit;
+}
+
 require_once '../config.php';
-require_once '../auth.php'; // For the logout() function
 
-// 1. Check if a user is logged in at all
-if (!isset($_SESSION['user_id'])) {
-    header('Location: /ref/login.php'); // Use the correct login path
-    exit;
-}
+// Variables for messages
+$success = "";
+$error = "";
 
-// 2. Check if the user has the CORRECT role (either 'rep' or 'representative')
-$user_role = $_SESSION['role'] ?? null;
-if ($user_role !== 'rep' && $user_role !== 'representative') {
-    // If they are 'admin' or something else, kick them out
-    header('Location: /ref/login.php');
-    exit;
-}
-// --- END NEW AUTH BLOCK ---
+// Process the form when submitted
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Get POST data
+    $first_name = trim($_POST['first_name'] ?? '');
+    $last_name = trim($_POST['last_name'] ?? '');
+    $username = trim($_POST['username'] ?? '');
+    $password = trim($_POST['password'] ?? '');
+    $role = trim($_POST['role'] ?? '');
+    $contact_number = trim($_POST['contact_number'] ?? '');
+    $email = trim($_POST['email'] ?? '');
+    $nic_number = trim($_POST['nic_number'] ?? '');
+    $address = trim($_POST['address'] ?? '');
+    $city = trim($_POST['city'] ?? '');
+    $join_date = trim($_POST['join_date'] ?? '');
+    $age = trim($_POST['age'] ?? '');
+    $bank_account = trim($_POST['bank_account'] ?? '');
+    $bank_name = trim($_POST['bank_name'] ?? '');
+    $branch = trim($_POST['branch'] ?? '');
+    $account_holder = trim($_POST['account_holder'] ?? '');
 
-$ref_id = $_SESSION['user_id']; // We now know this is set
-$errors = [];
-$sale_id = null;
+    // Basic validation
+    if ($first_name === '' || $last_name === '' || $username === '' || $password === '' || $role === '' || $email === '' || $nic_number === '') {
+        $error = "Please fill in all required fields.";
+    } elseif (!in_array($role, ['admin', 'rep', 'representative', 'sale_admin'])) {
+        $error = "Invalid role selected.";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $error = "Invalid email address.";
+    } elseif ($age !== '' && (!is_numeric($age) || intval($age) < 0 || intval($age) > 150)) {
+        $error = "Age must be a valid number between 0 and 150.";
+    } else {
+        // Hash the password
+        $hashed_password = password_hash($password, PASSWORD_DEFAULT);
 
-// This 'if' check is now redundant, but we'll keep it as a failsafe
-if (!$ref_id) {
-    header('Location: /ref/login.php');
-    exit;
-}
-
-/**
- * Ensure sale belongs to rep
- */
-function validate_sale_owner(mysqli $mysqli, int $sale_id, int $rep_user_id): bool
-{
-    $stmt = $mysqli->prepare("SELECT 1 FROM sales WHERE id = ? AND rep_user_id = ?");
-    $stmt->bind_param('ii', $sale_id, $rep_user_id);
-    $stmt->execute();
-    $owns = $stmt->get_result()->num_rows > 0;
-    $stmt->close();
-    return $owns;
-}
-
-/* 🟢 NEW LOGIC: "Save & Close" - This finalizes the sale and logs the points */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_and_close'])) {
-    $sale_id_to_close = (int) ($_POST['sale_id'] ?? 0);
-
-    if ($sale_id_to_close > 0 && validate_sale_owner($mysqli, $sale_id_to_close, $ref_id)) {
-
+        // Start transaction
         $mysqli->begin_transaction();
+
         try {
-            // 1. Check if points are already logged for this sale to prevent duplicates
-            $stmt = $mysqli->prepare("SELECT 1 FROM points_ledger WHERE sale_id = ?");
-            $stmt->bind_param('i', $sale_id_to_close);
-            $stmt->execute();
-            $already_logged = $stmt->get_result()->num_rows > 0;
-            $stmt->close();
+            // Prepare the SQL statement
+            $stmt = $mysqli->prepare("INSERT INTO users (first_name, last_name, username, password, role, contact_number, email, nic_number, address, city, join_date, age, bank_account, bank_name, branch, account_holder) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
-            if (!$already_logged) {
-                // 2. Get Rep's agency/representative info
-                $stmt = $mysqli->prepare("SELECT representative_id, agency_id FROM agency_reps WHERE rep_user_id = ?");
-                $stmt->bind_param('i', $ref_id);
-                $stmt->execute();
-                $repInfo = $stmt->get_result()->fetch_assoc();
-                $representative_id = $repInfo['representative_id'] ?? null;
-                $agency_id = $repInfo['agency_id'] ?? null;
-                $stmt->close();
+            if (!$stmt) {
+                throw new Exception("Database error: " . htmlspecialchars($mysqli->error));
+            }
 
-                // 3. Get Sale Date
-                $stmt = $mysqli->prepare("SELECT sale_date FROM sales WHERE id = ?");
-                $stmt->bind_param('i', $sale_id_to_close);
-                $stmt->execute();
-                $sale_date = $stmt->get_result()->fetch_object()->sale_date;
-                $stmt->close();
+            // Convert empty strings to NULL for optional fields
+            $join_date = $join_date === '' ? null : $join_date;
+            $age = $age === '' ? null : intval($age);
+            $contact_number = $contact_number === '' ? null : $contact_number;
+            $address = $address === '' ? null : $address;
+            $city = $city === '' ? null : $city;
+            $bank_account = $bank_account === '' ? null : $bank_account;
+            $bank_name = $bank_name === '' ? null : $bank_name;
+            $branch = $branch === '' ? null : $branch;
+            $account_holder = $account_holder === '' ? null : $account_holder;
 
-                // 4. Calculate total points for the sale
-                $stmt = $mysqli->prepare("
-                    SELECT 
-                        SUM(si.quantity * i.rep_points) AS total_rep, 
-                        SUM(si.quantity * i.representative_points) AS total_rep_for_rep
-                    FROM sale_items si 
-                    JOIN items i ON si.item_id = i.id 
-                    WHERE si.sale_id = ?
-                ");
-                $stmt->bind_param('i', $sale_id_to_close);
-                $stmt->execute();
-                $points = $stmt->get_result()->fetch_assoc();
-                $points_rep = (int) $points['total_rep'];
-                $points_representative = (int) $points['total_rep_for_rep'];
-                $stmt->close();
+            $stmt->bind_param(
+                "sssssssssssissss",
+                $first_name,
+                $last_name,
+                $username,
+                $hashed_password,
+                $role,
+                $contact_number,
+                $email,
+                $nic_number,
+                $address,
+                $city,
+                $join_date,
+                $age,
+                $bank_account,
+                $bank_name,
+                $branch,
+                $account_holder
+            );
 
-                // 5. Insert into points_ledger
-                $stmt = $mysqli->prepare("
-                    INSERT INTO points_ledger 
-                        (sale_id, rep_user_id, representative_id, agency_id, sale_date, points_rep, points_representative) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->bind_param('iiiisii', $sale_id_to_close, $ref_id, $representative_id, $agency_id, $sale_date, $points_rep, $points_representative);
-                $stmt->execute();
-                $stmt->close();
-
-                // 6. Update agency_points summary table (using ON DUPLICATE KEY UPDATE)
-                if ($agency_id) {
-                    $stmt = $mysqli->prepare("
-                        INSERT INTO agency_points (agency_id, total_rep_points, total_representative_points)
-                        VALUES (?, ?, ?)
-                        ON DUPLICATE KEY UPDATE
-                            total_rep_points = total_rep_points + VALUES(total_rep_points),
-                            total_representative_points = total_representative_points + VALUES(total_representative_points)
-                    ");
-                    $stmt->bind_param('iii', $agency_id, $points_rep, $points_representative);
-                    $stmt->execute();
-                    $stmt->close();
+            if (!$stmt->execute()) {
+                // Check for specific error codes
+                if ($mysqli->errno == 1062) { // Duplicate entry
+                    throw new Exception("Username, email, or NIC number already exists.");
+                } else {
+                    throw new Exception("Database error: " . htmlspecialchars($mysqli->error));
                 }
             }
 
-            $mysqli->commit();
-
-        } catch (Exception $e) {
-            $mysqli->rollback();
-            // Handle error - maybe set a session flash message
-        }
-    }
-    // 🟡 MODIFIED: Redirect to the correct dashboard based on role
-    if ($user_role === 'representative') {
-        header('Location: leader_dashboard.php');
-    } else {
-        header('Location: ref_dashboard.php');
-    }
-    exit;
-}
-
-
-/* 🟡 MODIFIED: Delete sale */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_sale'])) {
-    $sale_id_to_cancel = (int) ($_POST['sale_id'] ?? 0);
-
-    if ($sale_id_to_cancel > 0 && validate_sale_owner($mysqli, $sale_id_to_cancel, $ref_id)) {
-        $mysqli->begin_transaction();
-        try {
-            /* 🟢 NEW LOGIC: Find points to reverse from agency_points */
-            $stmt = $mysqli->prepare("SELECT agency_id, points_rep, points_representative FROM points_ledger WHERE sale_id = ?");
-            $stmt->bind_param('i', $sale_id_to_cancel);
-            $stmt->execute();
-            $ledgerEntry = $stmt->get_result()->fetch_assoc();
+            $new_user_id = $mysqli->insert_id;
             $stmt->close();
 
-            /*
-             * Now, delete the sale.
-             * Because of `ON DELETE CASCADE` in your `points_ledger` and `sale_items` tables,
-             * deleting the `sales` record will automatically delete all associated
-             * `sale_items` and the `points_ledger` entry.
-             */
-            $stmt = $mysqli->prepare("DELETE FROM sales WHERE id = ?");
-            $stmt->bind_param('i', $sale_id_to_cancel);
-            $stmt->execute();
-            $stmt->close();
+            // If role is 'representative', create agency 1 and agency 2
+            if ($role === 'representative' && $new_user_id) {
+                $agency_stmt = $mysqli->prepare("INSERT INTO agencies (representative_id, agency_name) VALUES (?, ?)");
+                if (!$agency_stmt) {
+                    throw new Exception("Database error: " . htmlspecialchars($mysqli->error));
+                }
 
-            /* 🟢 NEW LOGIC: If a ledger entry existed, subtract its points from the agency_points summary */
-            if ($ledgerEntry && $ledgerEntry['agency_id']) {
-                $stmt = $mysqli->prepare("
-                    UPDATE agency_points 
-                    SET 
-                        total_rep_points = total_rep_points - ?, 
-                        total_representative_points = total_representative_points - ?
-                    WHERE agency_id = ?
-                ");
-                $stmt->bind_param('iii', $ledgerEntry['points_rep'], $ledgerEntry['points_representative'], $ledgerEntry['agency_id']);
-                $stmt->execute();
-                $stmt->close();
+                // Insert agency 1
+                $agency_name_1 = 'agency 1';
+                $agency_stmt->bind_param("is", $new_user_id, $agency_name_1);
+                if (!$agency_stmt->execute()) {
+                    throw new Exception("Failed to create agency 1: " . htmlspecialchars($mysqli->error));
+                }
+
+                // Insert agency 2
+                $agency_name_2 = 'agency 2';
+                $agency_stmt->bind_param("is", $new_user_id, $agency_name_2);
+                if (!$agency_stmt->execute()) {
+                    throw new Exception("Failed to create agency 2: " . htmlspecialchars($mysqli->error));
+                }
+
+                $agency_stmt->close();
             }
 
+            // Commit transaction
             $mysqli->commit();
+            $success = "User successfully created!";
+            // Reset form values
+            $_POST = array();
         } catch (Exception $e) {
+            // Rollback transaction on error
             $mysqli->rollback();
+            $error = $e->getMessage();
         }
     }
-    // 🟡 MODIFIED: Redirect to the correct dashboard based on role
-    if ($user_role === 'representative') {
-        header('Location: leader_dashboard.php');
-    } else {
-        header('Location: ref_dashboard.php');
-    }
-    exit;
 }
-
-/* ✅ Create sale (with sale_type FULL or HALF) */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_sale'])) {
-    $sale_date_input = trim($_POST['sale_date'] ?? '');
-    $sale_type = ($_POST['sale_type'] ?? 'full');
-
-    if (!in_array($sale_type, ['full', 'half'])) {
-        $sale_type = 'full';
-    }
-
-    $saleDateTime = DateTime::createFromFormat('Y-m-d\TH:i', $sale_date_input);
-
-    if (!$saleDateTime) {
-        $errors[] = "Sale date & time required";
-    }
-
-    if (empty($errors)) {
-        $sale_date = $saleDateTime->format('Y-m-d');
-        $created_at = $saleDateTime->format('Y-m-d H:i:s');
-
-        /* 🟡 MODIFIED: Set admin_approved = 0 by default. Points are logged on "Save & Close". */
-        $stmt = $mysqli->prepare("INSERT INTO sales (rep_user_id, sale_date, sale_type, created_at, admin_approved) VALUES (?, ?, ?, ?, 0)");
-        $stmt->bind_param('isss', $ref_id, $sale_date, $sale_type, $created_at);
-
-        if ($stmt->execute()) {
-            $sale_id = $stmt->insert_id;
-            header("Location: add_sale.php?sale_id=$sale_id");
-            exit;
-        } else {
-            $errors[] = "Failed to create sale.";
-        }
-        $stmt->close();
-    }
-}
-
-/* ✅ Add item AJAX */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
-    $sale_id = (int) ($_POST['sale_id'] ?? 0);
-    $item_id = (int) ($_POST['item_id'] ?? 0);
-    $qty = (int) ($_POST['qty'] ?? 1);
-
-    if ($sale_id <= 0 || $qty <= 0) {
-        echo json_encode(["success" => false, "error" => "Missing values"]);
-        exit;
-    }
-
-    if (!validate_sale_owner($mysqli, $sale_id, $ref_id)) {
-        echo json_encode(["success" => false, "error" => "Unauthorized"]);
-        exit;
-    }
-
-    $stmt = $mysqli->prepare("INSERT INTO sale_items (sale_id, item_id, quantity) VALUES (?, ?, ?)");
-    $stmt->bind_param('iii', $sale_id, $item_id, $qty);
-
-    if ($stmt->execute()) {
-        echo json_encode(["success" => true]);
-    } else {
-        echo json_encode(["success" => false, "error" => "DB Error"]);
-    }
-    exit;
-}
-
-/* ✅ Search items */
-if (isset($_GET['ajax']) && $_GET['ajax'] === 'item_search') {
-    $q = '%' . ($_GET['q'] ?? '') . '%';
-
-    $stmt = $mysqli->prepare("SELECT id, item_code, item_name, price FROM items WHERE item_code LIKE ? OR item_name LIKE ?");
-    $stmt->bind_param('ss', $q, $q);
-    $stmt->execute();
-    $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-
-    echo json_encode($items);
-    exit;
-}
-
-/* ✅ Fetch sale items */
-if (isset($_GET['ajax']) && $_GET['ajax'] === 'sale_items') {
-    $sale_id = (int) $_GET['sale_id'];
-    $items = [];
-
-    if (validate_sale_owner($mysqli, $sale_id, $ref_id)) {
-        $sql = "SELECT si.id, si.quantity, i.item_code, i.item_name, i.price
-                FROM sale_items si
-                JOIN items i ON si.item_id = i.id
-                WHERE si.sale_id = ?";
-        $stmt = $mysqli->prepare($sql);
-        $stmt->bind_param('i', $sale_id);
-        $stmt->execute();
-        $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    }
-
-    echo json_encode($items);
-    exit;
-}
-
-/* ✅ Existing sale info */
-$existing_sale_id = (int) ($_GET['sale_id'] ?? 0);
-$activeSale = null;
-
-if ($existing_sale_id > 0) {
-    $stmt = $mysqli->prepare("SELECT id, sale_date, sale_type, created_at FROM sales WHERE id = ? AND rep_user_id = ?");
-    $stmt->bind_param('ii', $existing_sale_id, $ref_id);
-    $stmt->execute();
-    $activeSale = $stmt->get_result()->fetch_assoc();
-    if (!$activeSale) {
-        header("Location: add_sale.php");
-        exit;
-    }
-}
-
 ?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add New User - Admin Portal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <title>Add Sale</title>
 </head>
 
-<body class="bg-gray-100">
-    <?php
-    // 🟡 --- NEW HEADER LOGIC --- 🟡
-    // Dynamically include the correct header based on the user's role
-    if ($user_role === 'representative') {
-        include 'leader_header.php';
-    } else {
-        include 'refs_header.php';
-    }
-    ?>
-    <div class="max-w-xl mx-auto p-6 mt-8 bg-white rounded shadow">
-        <?php if (!$existing_sale_id): ?>
-            <h2 class="text-xl font-bold mb-4">Create New Sale</h2>
+<body class="bg-slate-100 min-h-screen">
 
-            <?php if ($errors): ?>
-                <div class="bg-red-100 text-red-700 p-3 rounded mb-3">
-                    <?php foreach ($errors as $e)
-                        echo "<div>$e</div>"; ?>
-                </div>
-            <?php endif; ?>
+    <!-- Include the admin header for session and role checks/UI -->
+    <?php include_once("../admin_header.php"); ?>
 
-            <form method="POST" class="space-y-4">
-                <label class="block">
-                    Date & Time
-                    <input type="datetime-local" name="sale_date" value="<?= date('Y-m-d\TH:i') ?>"
-                        class="border w-full p-2 rounded" required>
-                </label>
+    <div
+        class="max-w-4xl mx-4 sm:mx-6 md:mx-auto mt-4 sm:mt-6 md:mt-8 lg:mt-10 bg-white shadow-lg rounded-lg p-4 sm:p-6 md:p-8 mb-8">
+        <h2 class="text-xl sm:text-2xl md:text-3xl font-bold mb-4 sm:mb-5 md:mb-6 text-slate-700 flex items-center">
+            <img src="https://img.icons8.com/fluency/48/add-user-male.png"
+                class="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 mr-2" alt="User" />
+            <span class="text-lg sm:text-xl md:text-2xl">Add New User</span>
+        </h2>
 
-                <label class="block">
-                    Sale Type
-                    <select name="sale_type" class="border w-full p-2 rounded">
-                        <option value="full">Full</option>
-                        <option value="half">Half</option>
-                    </select>
-                </label>
+        <?php if ($success): ?>
+            <div id="successMessage"
+                class="bg-green-300 text-green-800 px-3 sm:px-4 py-2 rounded mb-3 sm:mb-4 text-sm sm:text-base border border-green-500">
+                <?= htmlspecialchars($success) ?>
+            </div>
+            <script>
+                setTimeout(function () {
+                    const successMsg = document.getElementById('successMessage');
+                    if (successMsg) {
+                        successMsg.style.opacity = '0';
+                        successMsg.style.transition = 'opacity 0.5s';
+                        setTimeout(function () {
+                            successMsg.remove();
+                        }, 500);
+                    }
+                }, 3000);
+            </script>
+        <?php endif; ?>
 
-                <button name="create_sale" class="bg-blue-600 text-white w-full p-2 rounded">Start Sale</button>
-            </form>
+        <?php if ($error): ?>
+            <div
+                class="bg-red-100 text-red-700 px-3 sm:px-4 py-2 rounded mb-3 sm:mb-4 text-sm sm:text-base border border-red-500">
+                <?= htmlspecialchars($error) ?>
+            </div>
+        <?php endif; ?>
 
-        <?php else: ?>
+        <form method="post" class="space-y-4 sm:space-y-5">
+            <!-- Personal Information Section -->
+            <div class="border-b border-slate-200 pb-4 mb-4">
+                <h3 class="text-lg font-semibold text-slate-700 mb-4">Personal Information</h3>
 
-            <h2 class="text-xl font-bold mb-4">Add Items (Sale #<?= $existing_sale_id ?>)</h2>
-            <p>Date: <?= $activeSale['sale_date'] ?> • Type: <?= strtoupper($activeSale['sale_type']) ?></p>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="first_name">
+                            First Name<span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="first_name" name="first_name" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['first_name'] ?? '') ?>" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
 
-            <form id="addItemForm" class="flex flex-wrap gap-2 my-4">
-                <input type="hidden" name="sale_id" value="<?= $existing_sale_id ?>">
-                <input type="hidden" name="item_id" id="itemIdField">
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="last_name">
+                            Last Name<span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="last_name" name="last_name" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['last_name'] ?? '') ?>" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
 
-                <div class="flex-1 min-w-[220px] relative">
-                    <label class="block text-sm font-medium text-gray-600 mb-1" for="itemSearchInput">Find Item</label>
-                    <input type="text" id="itemSearchInput" placeholder="Search by name or code" autocomplete="off"
-                        class="border w-full p-2 rounded">
-                    <div id="itemResults"
-                        class="hidden absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded shadow max-h-60 overflow-y-auto">
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="username">
+                            Username<span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="username" name="username" maxlength="20"
+                            value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="password">
+                            Default Password<span class="text-red-500">*</span>
+                        </label>
+                        <input type="password" id="password" name="password" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="email">
+                            Email<span class="text-red-500">*</span>
+                        </label>
+                        <input type="email" id="email" name="email" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="nic_number">
+                            NIC Number<span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" id="nic_number" name="nic_number" maxlength="20"
+                            value="<?= htmlspecialchars($_POST['nic_number'] ?? '') ?>" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="contact_number">
+                            Contact Number
+                        </label>
+                        <input type="text" id="contact_number" name="contact_number" maxlength="20"
+                            value="<?= htmlspecialchars($_POST['contact_number'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="age">
+                            Age
+                        </label>
+                        <input type="number" id="age" name="age" min="0" max="150"
+                            value="<?= htmlspecialchars($_POST['age'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="role">
+                            Role<span class="text-red-500">*</span>
+                        </label>
+                        <select id="role" name="role" required
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none">
+                            <option value="">Select Role</option>
+                            <option value="admin" <?= (isset($_POST['role']) && $_POST['role'] === 'admin') ? 'selected' : '' ?>>Admin</option>
+                            <option value="rep" <?= (isset($_POST['role']) && $_POST['role'] === 'rep') ? 'selected' : '' ?>>Rep</option>
+                            <option value="representative" <?= (isset($_POST['role']) && $_POST['role'] === 'representative') ? 'selected' : '' ?>>Representative</option>
+                            <option value="sale_admin" <?= (isset($_POST['role']) && $_POST['role'] === 'sale_admin') ? 'selected' : '' ?>>Sale Admin</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="join_date">
+                            Join Date
+                        </label>
+                        <input type="date" id="join_date" name="join_date"
+                            value="<?= htmlspecialchars($_POST['join_date'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
                     </div>
                 </div>
 
-                <div class="flex items-end gap-2">
-                    <label class="block text-sm font-medium text-gray-600">
-                        Quantity
-                        <input type="number" name="qty" id="itemQtyInput" value="1" min="1" class="border p-2 rounded w-24">
-                    </LAbel>
-                    <button class="bg-blue-600 text-white px-4 py-2 rounded h-10 self-end" type="submit">Add</button>
+                <div class="mt-4">
+                    <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="address">
+                        Address
+                    </label>
+                    <textarea id="address" name="address" rows="2" maxlength="255"
+                        class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none"><?= htmlspecialchars($_POST['address'] ?? '') ?></textarea>
                 </div>
-            </form>
 
-            <div id="saleItemsContainer" class="border rounded p-2 bg-gray-50"></div>
-
-            <div class="mt-4 flex flex-wrap gap-2">
-                <form method="POST" class="flex-1 min-w-[160px]">
-                    <input type="hidden" name="sale_id" value="<?= $existing_sale_id ?>">
-                    <button name="cancel_sale" class="bg-red-100 text-red-700 px-4 py-2 rounded w-full">Cancel Sale</button>
-                </form>
-
-                <form method="POST" class="flex-1 min-w-[160px]">
-                    <input type="hidden" name="sale_id" value="<?= $existing_sale_id ?>">
-                    <button name="save_and_close"
-                        class="w-full bg-green-600 text-white text-center px-4 py-2 rounded flex items-center justify-center">
-                        Save & Close
-                    </button>
-                </form>
+                <div class="mt-4">
+                    <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="city">
+                        City
+                    </label>
+                    <input type="text" id="city" name="city" maxlength="100"
+                        value="<?= htmlspecialchars($_POST['city'] ?? '') ?>"
+                        class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                </div>
             </div>
 
-            <script>
-                document.addEventListener('DOMContentLoaded', () => {
-                    const saleId = <?= $existing_sale_id ?>;
-                    const saleItemsContainer = document.getElementById('saleItemsContainer');
-                    const addItemForm = document.getElementById('addItemForm');
-                    const itemIdField = document.getElementById('itemIdField');
-                    const itemSearchInput = document.getElementById('itemSearchInput');
-                    const itemResults = document.getElementById('itemResults');
-                    const qtyInput = document.getElementById('itemQtyInput');
-                    let searchTimer = null;
+            <!-- Bank Information Section -->
+            <div class="border-b border-slate-200 pb-4 mb-4">
+                <h3 class="text-lg font-semibold text-slate-700 mb-4">Bank Information</h3>
 
-                    function loadItems() {
-                        fetch(`add_sale.php?ajax=sale_items&sale_id=${saleId}`)
-                            .then(r => r.json())
-                            .then(items => {
-                                if (!items.length) {
-                                    saleItemsContainer.innerHTML = '<div class="text-gray-500 text-sm">No items added yet.</div>';
-                                    return;
-                                }
-                                saleItemsContainer.innerHTML = items.map(i => `
-                                    <div class="p-2 border-b last:border-b-0">
-                                        <div class="font-medium">${i.item_code} - ${i.item_name}</div>
-                                        <div class="text-sm text-gray-600">Qty: ${i.quantity} • Rs ${i.price}</div>
-                                    </div>
-                                `).join('');
-                            })
-                            .catch(() => {
-                                saleItemsContainer.innerHTML = '<div class="text-red-600 text-sm">Failed to load items.</div>';
-                            });
-                    }
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="bank_name">
+                            Bank Name
+                        </label>
+                        <input type="text" id="bank_name" name="bank_name" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['bank_name'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
 
-                    function hideResults() {
-                        itemResults.classList.add('hidden');
-                    }
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="branch">
+                            Branch
+                        </label>
+                        <input type="text" id="branch" name="branch" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['branch'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
 
-                    function renderResults(items) {
-                        if (!items.length) {
-                            itemResults.innerHTML = '<div class="px-3 py-2 text-sm text-gray-500">No items found.</div>';
-                            itemResults.classList.remove('hidden');
-                            itemResults.dataset.hasItems = '0';
-                            return;
-                        }
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="account_holder">
+                            Account Holder Name
+                        </label>
+                        <input type="text" id="account_holder" name="account_holder" maxlength="100"
+                            value="<?= htmlspecialchars($_POST['account_holder'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
 
-                        itemResults.innerHTML = items.map(item => `
-                            <button type="button" data-id="${item.id}" data-code="${item.item_code}"
-                                data-name="${item.item_name}"
-                                class="w-full text-left px-3 py-2 hover:bg-blue-50 focus:bg-blue-100 text-sm flex justify-between gap-2">
-                                <span class="font-medium">${item.item_code}</span>
-                                <span class="text-gray-600 flex-1 text-right overflow-hidden text-ellipsis whitespace-nowrap">${item.item_name}</span>
-                                <span class="text-gray-500">Rs ${item.price}</span>
-                            </button>
-                        `).join('');
+                    <div>
+                        <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="bank_account">
+                            Bank Account Number
+                        </label>
+                        <input type="text" id="bank_account" name="bank_account" maxlength="50"
+                            value="<?= htmlspecialchars($_POST['bank_account'] ?? '') ?>"
+                            class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                    </div>
+                </div>
+            </div>
 
-                        itemResults.classList.remove('hidden');
-                        itemResults.dataset.hasItems = '1';
-                    }
-
-                    function performSearch(term) {
-                        fetch(`add_sale.php?ajax=item_search&q=${encodeURIComponent(term)}`)
-                            .then(r => r.json())
-                            .then(renderResults)
-                            .catch(() => {
-                                itemResults.innerHTML = '<div class="px-3 py-2 text-sm text-red-600">Search failed.</div>';
-                                itemResults.classList.remove('hidden');
-                                itemResults.dataset.hasItems = '0';
-                            });
-                    }
-
-                    itemSearchInput.addEventListener('input', (e) => {
-                        const term = e.target.value.trim();
-                        itemIdField.value = '';
-                        if (term.length < 2) {
-                            hideResults();
-                            return;
-                        }
-                        clearTimeout(searchTimer);
-                        searchTimer = setTimeout(() => performSearch(term), 250);
-                    });
-
-                    itemSearchInput.addEventListener('focus', () => {
-                        if (itemResults.dataset.hasItems === '1') {
-                            itemResults.classList.remove('hidden');
-                        }
-                    });
-
-                    itemResults.addEventListener('click', (e) => {
-                        const option = e.target.closest('button[data-id]');
-                        if (!option) {
-                            return;
-                        }
-                        itemIdField.value = option.dataset.id;
-                        itemSearchInput.value = `${option.dataset.code} - ${option.dataset.name}`;
-                        itemSearchInput.classList.remove('border-red-500');
-                        hideResults();
-                        qtyInput.focus();
-                    });
-
-                    document.addEventListener('click', (e) => {
-                        if (!itemResults.contains(e.target) && e.target !== itemSearchInput) {
-                            hideResults();
-                        }
-                    });
-
-                    addItemForm.addEventListener('submit', e => {
-                        e.preventDefault();
-
-                        if (!itemIdField.value) {
-                            itemSearchInput.classList.add('border-red-500');
-                            itemSearchInput.focus();
-                            return;
-                        }
-
-                        const fd = new FormData(addItemForm);
-                        fd.append('add_item', '1');
-
-                        fetch('add_sale.php', { method: 'POST', body: fd })
-                            .then(r => r.json())
-                            .then(response => {
-                                if (!response.success) {
-                                    alert(response.error || 'Unable to add item. Please try again.');
-                                    return;
-                                }
-                                loadItems();
-                                addItemForm.reset();
-                                itemIdField.value = '';
-                                itemResults.innerHTML = '';
-                                hideResults();
-                                qtyInput.value = 1;
-                                itemSearchInput.focus();
-                            })
-                            .catch(() => {
-                                alert('Unable to add item. Please try again.');
-                            });
-                    });
-
-                    loadItems();
-                });
-            </script>
-        <?php endif; ?>
+            <div class="pt-3 sm:pt-4 md:pt-5">
+                <button type="submit"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold py-2.5 sm:py-2 md:py-3 rounded transition text-sm sm:text-base">
+                    Add User
+                </button>
+            </div>
+        </form>
     </div>
+
 </body>
 
 </html>
-<?php $mysqli->close(); ?>

@@ -6,9 +6,15 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     exit;
 }
 
+// Include database connection at the top so it's available for header
+require_once("../config.php");
+
 // Variables for messages
 $success = "";
 $error = "";
+$use_percentage = false;
+$percent_leader = '';
+$percent_rep = '';
 
 // Process the form when submitted
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
@@ -18,25 +24,52 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $points_leader = trim($_POST['points_leader'] ?? '');
     $points_rep = trim($_POST['points_rep'] ?? '');
     $price = trim($_POST['price'] ?? '');
+    $use_percentage = isset($_POST['use_percentage']) ? true : false;
+    $percent_leader = trim($_POST['percent_leader'] ?? '');
+    $percent_rep = trim($_POST['percent_rep'] ?? '');
 
     // Basic validation
-    if ($item_code === '' || $item_name === '' || $points_leader === '' || $points_rep === '' || $price === '') {
+    if ($item_code === '' || $item_name === '' || $price === '') {
         $error = "Please fill in all required fields.";
-    } elseif (!ctype_digit($points_leader) || !ctype_digit($points_rep)) {
-        $error = "Points must be whole numbers.";
     } elseif (!is_numeric($price) || floatval($price) < 0) {
         $error = "Price must be a valid number greater than or equal to 0.";
     } else {
-        // Database insert
-        require_once("../config.php"); // Make sure this opens a $mysqli MySQLi connection
+        // If using percentage, compute points from price and percentages
+        if ($use_percentage) {
+            if ($percent_leader === '' || $percent_rep === '') {
+                $error = "Please provide both percentage values.";
+            } elseif (!is_numeric($percent_leader) || !is_numeric($percent_rep)) {
+                $error = "Percentages must be numbers.";
+            } elseif (floatval($percent_leader) < 0 || floatval($percent_rep) < 0) {
+                $error = "Percentages cannot be negative.";
+            } else {
+                $computed_leader = (int) round(floatval($price) * (floatval($percent_leader) / 100));
+                $computed_rep = (int) round(floatval($price) * (floatval($percent_rep) / 100));
+                $points_leader = (string) $computed_leader;
+                $points_rep = (string) $computed_rep;
+            }
+        } else {
+            // Validate fixed points mode
+            if ($points_leader === '' || $points_rep === '') {
+                $error = "Please provide both points values.";
+            } elseif (!ctype_digit($points_leader) || !ctype_digit($points_rep)) {
+                $error = "Points must be whole numbers.";
+            }
+        }
+    }
 
-        $stmt = $mysqli->prepare("INSERT INTO items (item_code, item_name, points_leader, points_rep, price) VALUES (?, ?, ?, ?, ?)");
+    if ($error === "") {
+        // Database insert
+        $stmt = $mysqli->prepare("INSERT INTO items (item_code, item_name, representative_points, rep_points, price) VALUES (?, ?, ?, ?, ?)");
         if ($stmt) {
             $stmt->bind_param("ssiid", $item_code, $item_name, $points_leader, $points_rep, $price);
             if ($stmt->execute()) {
                 $success = "Item successfully created!";
                 // Reset values for fresh form
                 $item_code = $item_name = $points_leader = $points_rep = $price = '';
+                $use_percentage = false;
+                $percent_leader = '';
+                $percent_rep = '';
             } else {
                 if ($mysqli->errno == 1062) { // Duplicate entry
                     $error = "Item code already exists.";
@@ -48,7 +81,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } else {
             $error = "Database error: " . $mysqli->error;
         }
-        $mysqli->close();
+        // Don't close the connection here - it's needed by admin_header.php
     }
 }
 ?>
@@ -103,14 +136,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="points_leader">Points for
                     Leader<span class="text-red-500">*</span></label>
                 <input type="number" id="points_leader" name="points_leader" min="0"
-                    value="<?= htmlspecialchars($points_leader ?? '') ?>" required
+                    value="<?= htmlspecialchars($points_leader ?? '') ?>"
                     class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
             </div>
             <div>
                 <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base" for="points_rep">Points for
                     Rep<span class="text-red-500">*</span></label>
                 <input type="number" id="points_rep" name="points_rep" min="0"
-                    value="<?= htmlspecialchars($points_rep ?? '') ?>" required
+                    value="<?= htmlspecialchars($points_rep ?? '') ?>"
                     class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
             </div>
             <div>
@@ -119,6 +152,29 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <input type="number" id="price" name="price" min="0" step="0.01"
                     value="<?= htmlspecialchars($price ?? '') ?>" required
                     class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+            </div>
+            <div class="mt-2">
+                <label class="inline-flex items-center space-x-2 text-slate-700 text-sm sm:text-base">
+                    <input type="checkbox" id="use_percentage" name="use_percentage" <?= !empty($use_percentage) ? 'checked' : '' ?>
+                        class="h-4 w-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500">
+                    <span>Use percentage of price for points</span>
+                </label>
+            </div>
+            <div id="percentage_fields" class="<?= !empty($use_percentage) ? '' : 'hidden' ?> space-y-4">
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base"
+                        for="percent_leader">Percentage for Leader Points (%)<span class="text-red-500">*</span></label>
+                    <input type="number" id="percent_leader" name="percent_leader" min="0" step="0.01"
+                        value="<?= htmlspecialchars($percent_leader ?? '') ?>"
+                        class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                </div>
+                <div>
+                    <label class="block font-medium text-slate-700 mb-1 text-sm sm:text-base"
+                        for="percent_rep">Percentage for Rep Points (%)<span class="text-red-500">*</span></label>
+                    <input type="number" id="percent_rep" name="percent_rep" min="0" step="0.01"
+                        value="<?= htmlspecialchars($percent_rep ?? '') ?>"
+                        class="w-full border rounded px-3 sm:px-4 py-2.5 sm:py-2 text-base focus:ring focus:ring-indigo-200 focus:outline-none" />
+                </div>
             </div>
             <div class="pt-3 sm:pt-4 md:pt-5">
                 <button type="submit"
@@ -129,6 +185,38 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </form>
     </div>
 
+    <script>
+        (function () {
+            const usePercentage = document.getElementById('use_percentage');
+            const percentFields = document.getElementById('percentage_fields');
+            const percentLeader = document.getElementById('percent_leader');
+            const percentRep = document.getElementById('percent_rep');
+            const pointsLeader = document.getElementById('points_leader');
+            const pointsRep = document.getElementById('points_rep');
+
+            function syncVisibility() {
+                const enabled = usePercentage.checked;
+                if (enabled) {
+                    percentFields.classList.remove('hidden');
+                    percentLeader.setAttribute('required', 'required');
+                    percentRep.setAttribute('required', 'required');
+                    pointsLeader.removeAttribute('required');
+                    pointsRep.removeAttribute('required');
+                } else {
+                    percentFields.classList.add('hidden');
+                    percentLeader.removeAttribute('required');
+                    percentRep.removeAttribute('required');
+                    pointsLeader.setAttribute('required', 'required');
+                    pointsRep.setAttribute('required', 'required');
+                }
+            }
+
+            if (usePercentage) {
+                usePercentage.addEventListener('change', syncVisibility);
+                syncVisibility();
+            }
+        })();
+    </script>
 </body>
 
 </html>

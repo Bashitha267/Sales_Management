@@ -40,87 +40,30 @@ if ($invite['status'] !== 'pending') {
     flash_and_redirect('This invite has already been processed.', 'error');
 }
 
-$agencyStmt = $mysqli->prepare("SELECT 1 FROM agencies WHERE id = ? AND representative_id = ?");
-$agencyStmt->bind_param("ii", $invite['agency_id'], $representative_id);
-$agencyStmt->execute();
-$agencyExists = $agencyStmt->get_result()->num_rows > 0;
-$agencyStmt->close();
-
-if (!$agencyExists) {
-    flash_and_redirect('You no longer manage the target agency.', 'error');
-}
-
+// Only handle reject action now (accept is handled in add_new_reps.php)
 if ($action === 'reject') {
-    $updateStmt = $mysqli->prepare("UPDATE agency_invites SET status = 'rejected' WHERE id = ?");
-    $updateStmt->bind_param("i", $id);
-    $updateStmt->execute();
-    $updateStmt->close();
-    $mysqli->close();
-    flash_and_redirect('Invite rejected.', 'success');
-}
+    // If user exists, we can optionally delete the user account or just reject the invite
+    $rep_user_id = intval($invite['rep_user_id'] ?? 0);
 
-$rep_user_id = intval($invite['rep_user_id'] ?? 0);
-if ($rep_user_id <= 0) {
-    flash_and_redirect('The rep must log in with the invite link before you can approve.', 'error');
-}
-
-$userStmt = $mysqli->prepare("SELECT role FROM users WHERE id = ?");
-$userStmt->bind_param("i", $rep_user_id);
-$userStmt->execute();
-$user = $userStmt->get_result()->fetch_assoc();
-$userStmt->close();
-
-if (!$user || $user['role'] !== 'rep') {
-    flash_and_redirect('Only reps can be added to your agency.', 'error');
-}
-
-$existingStmt = $mysqli->prepare("
-    SELECT agency_id
-    FROM agency_reps
-    WHERE representative_id = ? AND rep_user_id = ?
-    LIMIT 1
-");
-$existingStmt->bind_param("ii", $representative_id, $rep_user_id);
-$existingStmt->execute();
-$existingRelation = $existingStmt->get_result()->fetch_assoc();
-$existingStmt->close();
-
-if ($existingRelation) {
-    if (intval($existingRelation['agency_id']) === intval($invite['agency_id'])) {
-        $updateStmt = $mysqli->prepare("UPDATE agency_invites SET status = 'accepted' WHERE id = ?");
+    $mysqli->begin_transaction();
+    try {
+        // Reject the invite
+        $updateStmt = $mysqli->prepare("UPDATE agency_invites SET status = 'rejected' WHERE id = ?");
         $updateStmt->bind_param("i", $id);
         $updateStmt->execute();
         $updateStmt->close();
-        $mysqli->close();
-        flash_and_redirect('That rep is already part of this agency.', 'success');
+
+        // Optionally: If user was created but setup not completed, we could delete the user
+        // For now, we'll just reject the invite and leave the user account
+        // (The representative can complete setup later if needed)
+
+        $mysqli->commit();
+        flash_and_redirect('Invite rejected.', 'success');
+    } catch (Exception $e) {
+        $mysqli->rollback();
+        flash_and_redirect('Error rejecting invite: ' . htmlspecialchars($e->getMessage()), 'error');
     }
-
-    $updateStmt = $mysqli->prepare("UPDATE agency_invites SET status = 'rejected' WHERE id = ?");
-    $updateStmt->bind_param("i", $id);
-    $updateStmt->execute();
-    $updateStmt->close();
-    $mysqli->close();
-    flash_and_redirect('Each rep can only belong to one of your agencies. Remove them first if you need to move them.', 'error');
-}
-
-$mysqli->begin_transaction();
-
-try {
-    $updateInvite = $mysqli->prepare("UPDATE agency_invites SET status = 'accepted' WHERE id = ?");
-    $updateInvite->bind_param("i", $id);
-    $updateInvite->execute();
-    $updateInvite->close();
-
-    $insertRep = $mysqli->prepare("INSERT INTO agency_reps (rep_user_id, representative_id, agency_id) VALUES (?, ?, ?)");
-    $insertRep->bind_param("iii", $rep_user_id, $representative_id, $invite['agency_id']);
-    $insertRep->execute();
-    $insertRep->close();
-
-    $mysqli->commit();
-    $mysqli->close();
-    flash_and_redirect('Invite approved. The rep is now part of the agency.', 'success');
-} catch (Exception $e) {
-    $mysqli->rollback();
-    $mysqli->close();
-    flash_and_redirect('Something went wrong while approving the invite.', 'error');
+} else {
+    // Accept action should redirect to add_new_reps.php instead
+    flash_and_redirect('Please use the "Complete Setup" button to approve this invite.', 'error');
 }

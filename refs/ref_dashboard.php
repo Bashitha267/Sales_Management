@@ -11,20 +11,20 @@ include 'refs_header.php';
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ref Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Feather icons CDN -->
     <script src="https://unpkg.com/feather-icons"></script>
 </head>
 
-<body class="bg-gray-50 min-h-screen">
-    <div class="max-w-3xl mx-auto py-12">
-        <h1 class="text-3xl font-bold text-blue-800 mb-8 text-center flex items-center justify-center gap-2">
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+    <div class="max-w-5xl mx-auto py-12 px-6 flex-grow">
+        <h1 class="text-3xl font-bold text-blue-800 mb-10 text-center flex items-center justify-center gap-2">
             <span data-feather="grid"></span>
-            Ref Dashboard
+            Dashboard Menu
         </h1>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <!-- Add a Sale -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             <a href="add_sale.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
                 <div class="bg-blue-100 text-blue-700 rounded-full p-3 mr-4">
@@ -35,7 +35,6 @@ include 'refs_header.php';
                     <div class="text-gray-500 text-sm">Log a new sale</div>
                 </div>
             </a>
-            <!-- View Sales -->
             <a href="view_sales.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
                 <div class="bg-yellow-100 text-yellow-700 rounded-full p-3 mr-4">
@@ -46,7 +45,6 @@ include 'refs_header.php';
                     <div class="text-gray-500 text-sm">All your logged sales</div>
                 </div>
             </a>
-            <!-- View Team -->
             <a href="view_team.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
                 <div class="bg-green-100 text-green-700 rounded-full p-3 mr-4">
@@ -57,7 +55,6 @@ include 'refs_header.php';
                     <div class="text-gray-500 text-sm">See your team members</div>
                 </div>
             </a>
-            <!-- Profile -->
             <a href="/ref/profile.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
                 <div class="bg-purple-100 text-purple-700 rounded-full p-3 mr-4">
@@ -68,7 +65,6 @@ include 'refs_header.php';
                     <div class="text-gray-500 text-sm">View profile details</div>
                 </div>
             </a>
-            <!-- Report -->
             <a href="refs_report.php"
                 class="flex items-center p-6 bg-white rounded-lg shadow transition hover:bg-blue-50 group">
                 <div class="bg-red-100 text-red-700 rounded-full p-3 mr-4">
@@ -91,9 +87,12 @@ include 'refs_header.php';
             </a>
         </div>
     </div>
+
     <script>
         feather.replace();
     </script>
+    <?php include '../footer.php'; ?>
+
 </body>
 
 </html>

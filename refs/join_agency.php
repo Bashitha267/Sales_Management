@@ -5,23 +5,28 @@ session_start();
 $token = $_GET['token'] ?? '';
 $message = [
     'state' => 'info',
-    'title' => 'Representative Verification Required',
-    'body' => 'Enter your Representative ID to continue.',
-    'details' => 'We will fetch your details to confirm the request before linking.',
+    'title' => 'Join Agency',
+    'body' => 'Fill in your details to register as a new representative.',
+    'details' => 'All fields marked with * are required.',
     'action' => null
 ];
 
-$repIdForm = [
-    'visible' => true,
-    'value' => '',
-    'error' => ''
+$formData = [
+    'first_name' => '',
+    'last_name' => '',
+    'nic_number' => '',
+    'email' => '',
+    'contact_number' => '',
+    'age' => ''
 ];
 
-$userDetails = null;
-$showConfirmButton = false;
+$formErrors = [];
+$showSuccess = false;
+$user_id = null;
 
 if ($token) {
-    $stmt = $mysqli->prepare("SELECT * FROM agency_invites WHERE token = ?");
+    // Check if invite exists
+    $stmt = $mysqli->prepare("SELECT id, representative_id, rep_user_id, status FROM agency_invites WHERE token = ?");
     $stmt->bind_param("s", $token);
     $stmt->execute();
     $invite = $stmt->get_result()->fetch_assoc();
@@ -35,76 +40,136 @@ if ($token) {
             'details' => 'Please check the link or contact your representative.',
             'action' => null
         ];
-        $repIdForm['visible'] = false;
+    } elseif ($invite['status'] !== 'pending') {
+        $message = [
+            'state' => 'error',
+            'title' => 'Invitation Already Processed',
+            'body' => 'This invitation has already been used or rejected.',
+            'details' => 'Please contact your representative for a new invitation.',
+            'action' => null
+        ];
     } else {
-        $inviteId = $invite['id'];
-        $existingRep = $invite['rep_user_id'];
+        $invite_id = $invite['id'];
+        $representative_id = $invite['representative_id'];
 
-        // --- If user is logged in, auto-link the invite ---
-        if (isset($_SESSION['user_id'])) {
-            $repId = (int) $_SESSION['user_id'];
-            $updateStmt = $mysqli->prepare("UPDATE agency_invites SET rep_user_id = ? WHERE id = ?");
-            $updateStmt->bind_param("ii", $repId, $inviteId);
-            $updateStmt->execute();
-            $updateStmt->close();
+        // Process form submission
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_registration'])) {
+            // Get form data
+            $formData['first_name'] = trim($_POST['first_name'] ?? '');
+            $formData['last_name'] = trim($_POST['last_name'] ?? '');
+            $formData['nic_number'] = trim($_POST['nic_number'] ?? '');
+            $formData['email'] = trim($_POST['email'] ?? '');
+            $formData['contact_number'] = trim($_POST['contact_number'] ?? '');
+            $formData['age'] = trim($_POST['age'] ?? '');
 
-            $message = [
-                'state' => 'success',
-                'title' => 'Request Linked Automatically!',
-                'body' => 'The request has been successfully linked to your account.',
-                'details' => 'You can now go to the dashboard to manage your agency.',
-                'action' => ['label' => 'Go to Dashboard', 'url' => '/ref/login.php']
-            ];
-            $repIdForm['visible'] = false;
-        } else {
-            // Step 1: Fetch user details manually via Rep ID (existing logic)
-            if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rep_id']) && !isset($_POST['confirm'])) {
-                $repIdForm['value'] = trim($_POST['rep_id']);
-                if (!ctype_digit($repIdForm['value'])) {
-                    $repIdForm['error'] = 'Representative ID must be numeric.';
-                } else {
-                    $repId = (int) $repIdForm['value'];
-                    $userStmt = $mysqli->prepare("SELECT id, first_name, last_name, username, nic_number FROM users WHERE id = ?");
-                    $userStmt->bind_param("i", $repId);
-                    $userStmt->execute();
-                    $userResult = $userStmt->get_result();
-                    $userDetails = $userResult->fetch_assoc();
-                    $userStmt->close();
+            // Validate required fields
+            if (empty($formData['first_name'])) {
+                $formErrors['first_name'] = 'First name is required.';
+            }
+            if (empty($formData['last_name'])) {
+                $formErrors['last_name'] = 'Last name is required.';
+            }
+            if (empty($formData['nic_number'])) {
+                $formErrors['nic_number'] = 'NIC number is required.';
+            }
+            if (empty($formData['email'])) {
+                $formErrors['email'] = 'Email is required.';
+            } elseif (!filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
+                $formErrors['email'] = 'Invalid email address.';
+            }
+            if (!empty($formData['age']) && (!is_numeric($formData['age']) || intval($formData['age']) < 0 || intval($formData['age']) > 150)) {
+                $formErrors['age'] = 'Age must be a valid number between 0 and 150.';
+            }
 
-                    if (!$userDetails) {
-                        $repIdForm['error'] = 'Representative not found. Please check the ID.';
-                    } else {
-                        $showConfirmButton = true;
-                        $repIdForm['visible'] = false;
-                    }
+            // Check if email or NIC already exists
+            if (empty($formErrors)) {
+                $checkStmt = $mysqli->prepare("SELECT id FROM users WHERE email = ? OR nic_number = ?");
+                $checkStmt->bind_param("ss", $formData['email'], $formData['nic_number']);
+                $checkStmt->execute();
+                $existing = $checkStmt->get_result()->fetch_assoc();
+                $checkStmt->close();
+
+                if ($existing) {
+                    $formErrors['general'] = 'Email or NIC number already exists in the system.';
                 }
             }
 
-            // Step 2: Confirm & Send request
-            if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm']) && isset($_POST['rep_id'])) {
-                $repId = (int) $_POST['rep_id'];
-                $updateStmt = $mysqli->prepare("UPDATE agency_invites SET rep_user_id = ? WHERE id = ?");
-                $updateStmt->bind_param("ii", $repId, $inviteId);
-                $updateStmt->execute();
-                $updateStmt->close();
+            // If no errors, create user account and link to invite
+            if (empty($formErrors)) {
+                $mysqli->begin_transaction();
+                try {
+                    // Create user account with temporary username (will be set by representative later)
+                    // Password will be set by representative in add_new_reps.php
+                    // For now, create user with role 'rep' and a temporary password (user won't be able to login until password is set)
+                    $temp_username = 'temp_' . bin2hex(random_bytes(4));
+                    $temp_password = bin2hex(random_bytes(16)); // Random password, user won't use this
+                    $hashed_password = password_hash($temp_password, PASSWORD_DEFAULT);
+                    $role = 'rep';
 
-                $message = [
-                    'state' => 'success',
-                    'title' => 'Request Linked!',
-                    'body' => 'The request has been successfully linked to your representative.',
-                    'details' => 'You can now go to the dashboard to manage your agency.',
-                    'action' => ['label' => 'Go to Dashboard', 'url' => '/ref/login.php']
-                ];
-                $userDetails = null;
-                $repIdForm['visible'] = false;
-                $showConfirmButton = false;
+                    // Convert empty strings to NULL for optional fields
+                    $contact_number = empty($formData['contact_number']) ? null : $formData['contact_number'];
+                    $age = empty($formData['age']) ? null : intval($formData['age']);
+
+                    // Insert user
+                    $insertStmt = $mysqli->prepare("INSERT INTO users (first_name, last_name, username, password, role, email, nic_number, contact_number, age) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                    $insertStmt->bind_param(
+                        "ssssssssi",
+                        $formData['first_name'],
+                        $formData['last_name'],
+                        $temp_username,
+                        $hashed_password,
+                        $role,
+                        $formData['email'],
+                        $formData['nic_number'],
+                        $contact_number,
+                        $age
+                    );
+
+                    if (!$insertStmt->execute()) {
+                        throw new Exception('Failed to create user account: ' . $insertStmt->error);
+                    }
+
+                    $user_id = $mysqli->insert_id;
+                    $insertStmt->close();
+
+                    // Update invite with rep_user_id
+                    $updateStmt = $mysqli->prepare("UPDATE agency_invites SET rep_user_id = ? WHERE id = ?");
+                    $updateStmt->bind_param("ii", $user_id, $invite_id);
+                    if (!$updateStmt->execute()) {
+                        throw new Exception('Failed to link user to invite: ' . $updateStmt->error);
+                    }
+                    $updateStmt->close();
+
+                    $mysqli->commit();
+
+                    // Show success message
+                    $showSuccess = true;
+                    $message = [
+                        'state' => 'success',
+                        'title' => 'Welcome to Our System!',
+                        'body' => 'Your registration has been successfully submitted.',
+                        'details' => "Waiting for approval from representative.",
+                        'action' => null
+                    ];
+                } catch (Exception $e) {
+                    $mysqli->rollback();
+                    $formErrors['general'] = 'An error occurred: ' . htmlspecialchars($e->getMessage());
+                }
             }
         }
     }
+} else {
+    $message = [
+        'state' => 'error',
+        'title' => 'No Invitation Token',
+        'body' => 'Please use a valid invitation link.',
+        'details' => 'Contact your representative for an invitation link.',
+        'action' => null
+    ];
 }
 
 $stateClasses = [
-    'success' => 'border-l-4 border-violet-500 bg-violet-50 text-violet-900',
+    'success' => 'border-l-4 border-green-500 bg-green-50 text-green-900',
     'info' => 'border-l-4 border-blue-500 bg-blue-50 text-blue-900',
     'warning' => 'border-l-4 border-amber-500 bg-amber-50 text-amber-900',
     'error' => 'border-l-4 border-red-500 bg-red-50 text-red-900'
@@ -119,8 +184,6 @@ $stateIcons = [
 $currentState = $message['state'];
 $cardClasses = $stateClasses[$currentState] ?? $stateClasses['info'];
 $iconMarkup = $stateIcons[$currentState] ?? $stateIcons['info'];
-$action = $message['action'] ?? null;
-$showAction = is_array($action) && !empty($action['url']) && !empty($action['label']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -128,76 +191,147 @@ $showAction = is_array($action) && !empty($action['url']) && !empty($action['lab
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agency Invite</title>
+    <title>Join Agency</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
 <body class="bg-gray-50 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-xl w-full space-y-6">
-
+    <div class="max-w-2xl w-full space-y-6">
         <!-- Message Card -->
         <div class="bg-white shadow-lg rounded-2xl p-8">
-            <div class="flex items-start gap-4 border-l-4 <?php echo $cardClasses; ?> p-4 mb-6">
-                <div class="flex-shrink-0 text-violet-700"><?php echo $iconMarkup; ?></div>
+            <div class="flex items-start gap-4 <?php echo $cardClasses; ?> p-4 mb-6 rounded">
+                <div class="flex-shrink-0"><?php echo $iconMarkup; ?></div>
                 <div>
-                    <h2 class="text-2xl font-bold text-gray-900"><?php echo htmlspecialchars($message['title']); ?></h2>
-                    <p class="mt-1 text-gray-600"><?php echo htmlspecialchars($message['body']); ?></p>
+                    <h2 class="text-2xl font-bold"><?php echo htmlspecialchars($message['title']); ?></h2>
+                    <p class="mt-1"><?php echo htmlspecialchars($message['body']); ?></p>
                     <?php if (!empty($message['details'])): ?>
-                        <p class="mt-2 text-sm text-gray-500 border-l-2 border-gray-200 pl-3">
+                        <p class="mt-2 text-sm border-l-2 border-gray-200 pl-3">
                             <?php echo htmlspecialchars($message['details']); ?>
                         </p>
                     <?php endif; ?>
                 </div>
             </div>
 
-            <!-- Step 1: Enter Rep ID -->
-            <?php if ($repIdForm['visible']): ?>
-                <form method="POST" class="space-y-4">
-                    <label class="block text-sm font-medium text-gray-700">Representative ID</label>
-                    <input type="text" name="rep_id" value="<?php echo htmlspecialchars($repIdForm['value']); ?>"
-                        class="mt-1 block w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-violet-500 focus:ring focus:ring-violet-200 sm:text-sm"
-                        placeholder="Enter your Representative ID" required>
-                    <?php if (!empty($repIdForm['error'])): ?>
-                        <p class="mt-2 text-sm text-red-600"><?php echo htmlspecialchars($repIdForm['error']); ?></p>
+            <?php if (!empty($formErrors['general'])): ?>
+                <div class="mb-4 p-3 bg-red-100 text-red-700 rounded">
+                    <?php echo htmlspecialchars($formErrors['general']); ?>
+                </div>
+            <?php endif; ?>
+
+            <!-- Success Message -->
+            <?php if ($showSuccess): ?>
+                <div class="mt-6 text-center">
+                    <p class="text-lg font-semibold text-green-700 mb-2">
+                        <?php echo htmlspecialchars($message['body']); ?>
+                    </p>
+                    <?php if ($user_id): ?>
+                        <p class="text-base text-gray-700 mb-4">
+                            <strong>Your User ID:</strong> <?php echo htmlspecialchars((string) $user_id); ?>
+                        </p>
                     <?php endif; ?>
-                    <button type="submit"
-                        class="w-full bg-violet-600 hover:bg-violet-700 text-white font-semibold py-3 px-6 rounded-lg transition">
-                        Fetch Details
-                    </button>
+                    <p class="text-sm text-gray-600">
+                        <?php echo htmlspecialchars($message['details']); ?>
+                    </p>
+                </div>
+            <?php endif; ?>
+
+            <!-- Registration Form -->
+            <?php if (!$showSuccess && $token && isset($invite) && $invite && $invite['status'] === 'pending'): ?>
+                <form method="POST" class="space-y-4">
+                    <input type="hidden" name="submit_registration" value="1">
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                First Name <span class="text-red-500">*</span>
+                            </label>
+                            <input type="text" name="first_name"
+                                value="<?php echo htmlspecialchars($formData['first_name']); ?>"
+                                class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                                required>
+                            <?php if (!empty($formErrors['first_name'])): ?>
+                                <p class="mt-1 text-sm text-red-600"><?php echo htmlspecialchars($formErrors['first_name']); ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Last Name <span class="text-red-500">*</span>
+                            </label>
+                            <input type="text" name="last_name"
+                                value="<?php echo htmlspecialchars($formData['last_name']); ?>"
+                                class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                                required>
+                            <?php if (!empty($formErrors['last_name'])): ?>
+                                <p class="mt-1 text-sm text-red-600"><?php echo htmlspecialchars($formErrors['last_name']); ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            NIC Number <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" name="nic_number"
+                            value="<?php echo htmlspecialchars($formData['nic_number']); ?>"
+                            class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                            maxlength="20" required>
+                        <?php if (!empty($formErrors['nic_number'])): ?>
+                            <p class="mt-1 text-sm text-red-600"><?php echo htmlspecialchars($formErrors['nic_number']); ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            Email <span class="text-red-500">*</span>
+                        </label>
+                        <input type="email" name="email" value="<?php echo htmlspecialchars($formData['email']); ?>"
+                            class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                            maxlength="100" required>
+                        <?php if (!empty($formErrors['email'])): ?>
+                            <p class="mt-1 text-sm text-red-600"><?php echo htmlspecialchars($formErrors['email']); ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Contact Number
+                            </label>
+                            <input type="text" name="contact_number"
+                                value="<?php echo htmlspecialchars($formData['contact_number']); ?>"
+                                class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                                maxlength="20">
+                            <?php if (!empty($formErrors['contact_number'])): ?>
+                                <p class="mt-1 text-sm text-red-600">
+                                    <?php echo htmlspecialchars($formErrors['contact_number']); ?>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Age
+                            </label>
+                            <input type="number" name="age" value="<?php echo htmlspecialchars($formData['age']); ?>"
+                                class="w-full rounded-lg border-gray-300 p-3 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200"
+                                min="0" max="150">
+                            <?php if (!empty($formErrors['age'])): ?>
+                                <p class="mt-1 text-sm text-red-600"><?php echo htmlspecialchars($formErrors['age']); ?></p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <div class="pt-4">
+                        <button type="submit"
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition">
+                            Submit Registration
+                        </button>
+                    </div>
                 </form>
             <?php endif; ?>
-
-            <!-- Step 2: Show User Details + Confirm -->
-            <?php if ($userDetails && $showConfirmButton): ?>
-                <div class="bg-gray-50 p-6 rounded-xl border border-gray-200 shadow-inner">
-                    <h3 class="text-lg font-semibold mb-4">Representative Details</h3>
-                    <ul class="text-gray-700 space-y-2">
-                        <li><strong>Name:</strong>
-                            <?php echo htmlspecialchars($userDetails['first_name'] . ' ' . $userDetails['last_name']); ?>
-                        </li>
-                        <li><strong>Username:</strong> <?php echo htmlspecialchars($userDetails['username']); ?></li>
-                        <li><strong>NIC:</strong> <?php echo htmlspecialchars($userDetails['nic_number']); ?></li>
-                    </ul>
-                    <form method="POST" class="mt-4">
-                        <input type="hidden" name="rep_id" value="<?php echo (int) $userDetails['id']; ?>">
-                        <button type="submit" name="confirm"
-                            class="w-full bg-violet-600 hover:bg-violet-700 text-white font-semibold py-3 px-6 rounded-lg transition">
-                            Confirm & Send Request
-                        </button>
-                    </form>
-                </div>
-            <?php endif; ?>
-
-            <!-- Action Button -->
-            <?php if ($showAction): ?>
-                <div class="mt-6 text-center">
-                    <a href="<?php echo htmlspecialchars($action['url']); ?>"
-                        class="inline-block bg-violet-600 hover:bg-violet-700 text-white font-semibold py-3 px-6 rounded-lg transition">
-                        <?php echo htmlspecialchars($action['label']); ?>
-                    </a>
-                </div>
-            <?php endif; ?>
-
         </div>
     </div>
 </body>

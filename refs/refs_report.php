@@ -13,9 +13,15 @@ $user_id = $_SESSION['user_id'];
 // --- Handle year selection ---
 $cur_year = isset($_GET['year']) ? intval($_GET['year']) : (int) date('Y');
 
-// --- Get available years for this user ---
+// --- Get available years for this user (ONLY from 'full' and 'sale_approved' sales) ---
 $years = [];
-$yearStmt = $mysqli->prepare("SELECT DISTINCT YEAR(sale_date) AS y FROM sales WHERE rep_user_id = ? ORDER BY y DESC");
+// MODIFIED: Changed admin_approved = 1 to sale_approved = 1
+$yearStmt = $mysqli->prepare("
+    SELECT DISTINCT YEAR(sale_date) AS y 
+    FROM sales 
+    WHERE rep_user_id = ? AND sale_type = 'full' AND sale_approved = 1
+    ORDER BY y DESC
+");
 if ($yearStmt) {
     $yearStmt->bind_param('i', $user_id);
     $yearStmt->execute();
@@ -29,10 +35,11 @@ if (empty($years)) {
     $years[] = (int) date('Y');
 }
 
-// --- Calculate personal monthly points ---
+// --- Calculate personal monthly points (ONLY from 'full' and 'sale_approved' sales) ---
 $monthly_points = [];
 $monthly_sales_count = [];
 
+// MODIFIED: Changed s.admin_approved = 1 to s.sale_approved = 1
 $pointsStmt = $mysqli->prepare("
     SELECT
         MONTH(s.sale_date) AS month,
@@ -41,7 +48,10 @@ $pointsStmt = $mysqli->prepare("
     FROM sales s
     JOIN sale_items si ON si.sale_id = s.id
     LEFT JOIN items i ON i.id = si.item_id
-    WHERE s.rep_user_id = ? AND YEAR(s.sale_date) = ?
+    WHERE s.rep_user_id = ? 
+      AND YEAR(s.sale_date) = ?
+      AND s.sale_type = 'full'
+      AND s.sale_approved = 1
     GROUP BY month
 ");
 
@@ -83,48 +93,69 @@ $months = [
 </head>
 
 <body class="bg-gray-50 min-h-screen">
-    <div class="max-w-3xl mx-auto px-6 py-10">
-        <h1 class="text-3xl font-bold mb-6 text-blue-800">My Monthly Sales Report</h1>
+    <div class="max-w-3xl mx-auto px-4 py-10">
+        <h1 class="text-2xl sm:text-3xl font-bold mb-6 text-blue-800">My Monthly Sales Report (Approved Full Sales)</h1>
 
         <form method="get" class="mb-6 flex items-center gap-3">
-            <label class="font-semibold text-lg">Select Year:</label>
-            <select name="year" class="border rounded px-3 py-2 text-lg" onchange="this.form.submit()">
+            <label class="font-semibold text-base sm:text-lg">Select Year:</label>
+            <select name="year" class="border rounded px-3 py-2 text-base sm:text-lg" onchange="this.form.submit()">
                 <?php foreach ($years as $y): ?>
                     <option value="<?= $y ?>" <?= $y == $cur_year ? 'selected' : '' ?>><?= $y ?></option>
                 <?php endforeach; ?>
             </select>
         </form>
 
-        <div class="bg-white shadow-md rounded-lg overflow-hidden">
-            <table class="w-full text-left border-collapse text-base">
-                <thead class="bg-blue-100 text-blue-900">
-                    <tr>
-                        <th class="px-6 py-3">Month</th>
-                        <th class="px-6 py-3 text-right">Total Points</th>
-                        <th class="px-6 py-3 text-center">Sales Count</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-200">
-                    <?php
-                    $grand_total = 0;
-                    foreach ($months as $num => $name):
-                        $points = $monthly_points[$num] ?? 0;
-                        $salesCount = $monthly_sales_count[$num] ?? 0;
-                        $grand_total += $points;
-                        ?>
-                        <tr class="<?= $points > 0 ? 'bg-blue-50' : '' ?>">
-                            <td class="px-6 py-3 font-medium"><?= $name ?></td>
-                            <td class="px-6 py-3 text-right font-semibold text-blue-700"><?= $points ?></td>
-                            <td class="px-6 py-3 text-center"><?= $salesCount ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <tr class="bg-blue-200 font-bold">
-                        <td class="px-6 py-3 text-right">Total</td>
-                        <td class="px-6 py-3 text-right text-blue-900"><?= $grand_total ?></td>
-                        <td class="px-6 py-3 text-center"><?= array_sum($monthly_sales_count) ?></td>
-                    </tr>
-                </tbody>
-            </table>
+        <div class="space-y-3">
+            <?php
+            $grand_total_points = 0;
+            $grand_total_sales = 0;
+            foreach ($months as $num => $name):
+                $points = $monthly_points[$num] ?? 0;
+                $salesCount = $monthly_sales_count[$num] ?? 0;
+                $grand_total_points += $points;
+                $grand_total_sales += $salesCount;
+                ?>
+                <div class="bg-white shadow-md rounded-lg p-4 <?php echo ($points == 0) ? 'opacity-60' : ''; ?>">
+                    <div class="text-lg font-semibold text-blue-800">
+                        <?= $name ?>
+                    </div>
+                    <div class="flex justify-between items-center mt-2">
+                        <div>
+                            <div class="text-sm text-gray-600">Total Points</div>
+                            <div
+                                class="text-2xl font-bold <?php echo ($points > 0) ? 'text-blue-700' : 'text-gray-500'; ?>">
+                                <?= number_format($points) ?>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm text-gray-600">Sales Count</div>
+                            <div class="text-2xl font-bold text-gray-800">
+                                <?= number_format($salesCount) ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+
+            <div class="bg-blue-800 text-white shadow-lg rounded-lg p-5 mt-6">
+                <div class="text-xl font-bold">
+                    <?= $cur_year ?> Grand Total
+                </div>
+                <div class="flex justify-between items-center mt-2">
+                    <div>
+                        <div class="text-sm text-blue-200">Total Points</div>
+                        <div class="text-3xl font-bold">
+                            <?= number_format($grand_total_points) ?>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-sm text-blue-200">Total Sales</div>
+                        <div class="text-3xl font-bold">
+                            <?= number_format($grand_total_sales) ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </body>

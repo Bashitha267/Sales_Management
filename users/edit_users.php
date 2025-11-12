@@ -133,8 +133,8 @@ if (isset($_POST['delete'])) {
                         <select name="role"
                             class="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                             <option value="admin" <?= $user['role'] === 'admin' ? 'selected' : '' ?>>Admin</option>
-                            <option value="team leader" <?= $user['role'] === 'team leader' ? 'selected' : '' ?>>Team
-                                Leader</option>
+                            <option value="representative" <?= $user['role'] === 'representative' ? 'selected' : '' ?>>
+                                Representative</option>
                             <option value="rep" <?= $user['role'] === 'rep' ? 'selected' : '' ?>>Ref</option>
                         </select>
                     </div>

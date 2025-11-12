@@ -10,7 +10,7 @@ function isLoggedIn()
 function requireLogin()
 {
     if (!isLoggedIn()) {
-        header('Location: login.php');
+        header('Location: /ref/login.php');
         exit();
     }
 }
@@ -36,9 +36,17 @@ function login($username, $password)
     // echo $user['role'];
     // echo password_verify($password, $user['password']);
     if ($user && $password && password_verify($password, $user['password'])) {
+        // Store essential user information in session
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['role'] = $user['role'];
+        $_SESSION['first_name'] = $user['first_name'] ?? '';
+        $_SESSION['last_name'] = $user['last_name'] ?? '';
+        $_SESSION['email'] = $user['email'] ?? '';
+        $_SESSION['contact_number'] = $user['contact_number'] ?? '';
+        $_SESSION['nic_number'] = $user['nic_number'] ?? '';
+        $_SESSION['join_date'] = $user['join_date'] ?? '';
+        $_SESSION['age'] = $user['age'] ?? null;
 
         // Role based redirection
         switch ($user['role']) {
@@ -50,6 +58,9 @@ function login($username, $password)
                 break;
             case 'representative':
                 header('Location: /ref/leader/leader_dashboard.php');
+                break;
+            case 'sale_admin':
+                header('Location: /ref/sale_admin/sale_dashboard.php');
                 break;
             default:
                 // Unknown role - redirect to a safe place or logout
@@ -65,7 +76,7 @@ function logout()
 {
     session_unset();
     session_destroy();
-    header('Location: login.php');
+    header('Location: /ref/login.php');
     exit();
 }
 ?>

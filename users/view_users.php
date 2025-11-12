@@ -16,16 +16,28 @@ $rep_count = $mysqli->query("SELECT COUNT(*) AS c FROM users WHERE role = 'rep'"
 
 // --- Search logic ---
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$query = "SELECT * FROM users";
-if ($search !== '') {
-    // Use prepared statements to prevent SQL injection
+// Default fetch (10 users on initial load, mobile-first ordering by latest)
+if ($search === '') {
+    $result = $mysqli->query("SELECT * FROM users ORDER BY id DESC LIMIT 10");
+} else {
+    // Broaden search to common fields (id, username, first/last name, email, nic_number, role)
+    // Cast id to CHAR to allow partial matches
     $search_param = "%" . $search . "%";
-    $stmt = $mysqli->prepare("SELECT * FROM users WHERE id LIKE ? OR username LIKE ?");
-    $stmt->bind_param('ss', $search_param, $search_param);
+    $stmt = $mysqli->prepare("
+        SELECT *
+        FROM users
+        WHERE CAST(id AS CHAR) LIKE ?
+           OR username LIKE ?
+           OR first_name LIKE ?
+           OR last_name LIKE ?
+           OR email LIKE ?
+           OR nic_number LIKE ?
+           OR role LIKE ?
+        ORDER BY id DESC
+    ");
+    $stmt->bind_param('sssssss', $search_param, $search_param, $search_param, $search_param, $search_param, $search_param, $search_param);
     $stmt->execute();
     $result = $stmt->get_result();
-} else {
-    $result = $mysqli->query($query);
 }
 
 // Handle AJAX requests for real-time search
@@ -33,14 +45,26 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1') {
     header('Content-Type: application/json');
     $users = [];
     // Re-execute the query for AJAX requests to ensure fresh data
-    if ($search !== '') {
+    if ($search === '') {
+        // Show 10 users when search is empty
+        $ajax_result = $mysqli->query("SELECT * FROM users ORDER BY id DESC LIMIT 10");
+    } else {
         $search_param = "%" . $search . "%";
-        $stmt = $mysqli->prepare("SELECT * FROM users WHERE id LIKE ? OR username LIKE ?");
-        $stmt->bind_param('ss', $search_param, $search_param);
+        $stmt = $mysqli->prepare("
+            SELECT *
+            FROM users
+            WHERE CAST(id AS CHAR) LIKE ?
+               OR username LIKE ?
+               OR first_name LIKE ?
+               OR last_name LIKE ?
+               OR email LIKE ?
+               OR nic_number LIKE ?
+               OR role LIKE ?
+            ORDER BY id DESC
+        ");
+        $stmt->bind_param('sssssss', $search_param, $search_param, $search_param, $search_param, $search_param, $search_param, $search_param);
         $stmt->execute();
         $ajax_result = $stmt->get_result();
-    } else {
-        $ajax_result = $mysqli->query("SELECT * FROM users");
     }
 
     if ($ajax_result->num_rows > 0) {
@@ -127,7 +151,20 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1') {
                                 <tr class="hover:bg-slate-50 transition">
                                     <td class="p-3 border-b"><?= $row['id'] ?></td>
                                     <td class="p-3 border-b"><?= htmlspecialchars($row['username']) ?></td>
-                                    <td class="p-3 border-b capitalize"><?= htmlspecialchars($row['role']) ?></td>
+                                    <td class="p-3 border-b capitalize">
+                                        <span class="flex items-center gap-2">
+                                            <?= htmlspecialchars($row['role']) ?>
+                                            <?php if ($row['role'] === 'representative'): ?>
+                                                <?php if ($row['status'] === 'active'): ?>
+                                                    <span class="inline-block px-2 py-1 text-white rounded-full bg-green-500"
+                                                        title="Active">Active</span>
+                                                <?php else: ?>
+                                                    <span class="inline-block px-2 py-1 text-white rounded-full bg-red-500"
+                                                        title="Inactive">Inactive</span>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
+                                        </span>
+                                    </td>
                                     <td class="p-3 border-b"><?= htmlspecialchars($row['email'] ?? '-') ?></td>
                                     <td class="p-3 border-b text-center">
                                         <a href="edit_users.php?id=<?= $row['id'] ?>"
@@ -173,11 +210,20 @@ if (isset($_GET['ajax']) && $_GET['ajax'] == '1') {
 
                 let html = '';
                 users.forEach(user => {
+                    let roleDisplay;
+                    if (user.role === 'representative') {
+                        const statusIndicator = user.status === 'active'
+                            ? '<span class="inline-block rounded-full bg-green-500 px-2 py-1 text-white" title="Active">Active</span>'
+                            : '<span class="inline-block rounded-full bg-red-500 px-2 py-1 text-white" title="Inactive">Inactive</span>';
+                        roleDisplay = `<span class="flex items-center gap-2">${escapeHtml(user.role)} ${statusIndicator}</span>`;
+                    } else {
+                        roleDisplay = escapeHtml(user.role);
+                    }
                     html += `
                         <tr class="hover:bg-slate-50 transition">
                             <td class="p-3 border-b">${user.id}</td>
                             <td class="p-3 border-b">${escapeHtml(user.username)}</td>
-                            <td class="p-3 border-b capitalize">${escapeHtml(user.role)}</td>
+                            <td class="p-3 border-b capitalize">${roleDisplay}</td>
                             <td class="p-3 border-b">${escapeHtml(user.email || '-')}</td>
                             <td class="p-3 border-b text-center">
                                 <a href="edit_users.php?id=${user.id}"

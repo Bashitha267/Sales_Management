@@ -159,8 +159,7 @@ $sql = "
 ";
 
 $stmt = $mysqli->prepare($sql);
-$stmt->execute();
-$result = $stmt->get_result();
+$result = $mysqli->query($sql);
 ?>
 
 <!DOCTYPE html>
@@ -227,7 +226,8 @@ $result = $stmt->get_result();
                                             <?= htmlspecialchars($row['full_name']) ?>
                                         </p>
                                         <p class="text-sm text-slate-500" data-username>
-                                            <?= htmlspecialchars($row['username']) ?></p>
+                                            <?= htmlspecialchars($row['username']) ?>
+                                        </p>
                                     </div>
                                 </div>
                                 <span class="text-xs text-slate-400 font-mono">ID: <?= $row['id'] ?></span>
@@ -563,7 +563,7 @@ $result = $stmt->get_result();
 
 <?php
 // Close statements and connection
-if (isset($stmt) && $stmt)
-    $stmt->close();
-$mysqli->close();
+// if (isset($stmt) && $stmt)
+//     $stmt->close();
+// // $mysqli->close();
 ?>

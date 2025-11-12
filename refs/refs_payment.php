@@ -51,10 +51,12 @@ $end_date_str = date('Y-m-d', mktime(0, 0, 0, $month, $end_day, $year));
 
 // Get TOTAL pending points (all time)
 $total_pending_points = 0;
+// FIXED: Use points_ledger_rep and SUM(pl.points)
 $stmt_total = $mysqli->prepare("
-    SELECT SUM(points_rep) AS total_pending 
-    FROM points_ledger 
-    WHERE rep_user_id = ? AND redeemed = 0
+    SELECT SUM(pl.points) AS total_pending 
+    FROM points_ledger_rep pl
+    INNER JOIN sales s ON pl.sale_id = s.id
+    WHERE pl.rep_user_id = ? AND pl.redeemed = 0 AND s.sale_type = 'full'
 ");
 $stmt_total->bind_param("i", $user_id);
 $stmt_total->execute();
@@ -64,10 +66,12 @@ $stmt_total->close();
 
 // Get PENDING points for the *selected period*
 $period_pending_points = 0;
+// FIXED: Use points_ledger_rep and SUM(pl.points)
 $stmt_period = $mysqli->prepare("
-    SELECT SUM(points_rep) AS period_pending 
-    FROM points_ledger 
-    WHERE rep_user_id = ? AND redeemed = 0 AND sale_date BETWEEN ? AND ?
+    SELECT SUM(pl.points) AS period_pending 
+    FROM points_ledger_rep pl
+    INNER JOIN sales s ON pl.sale_id = s.id
+    WHERE pl.rep_user_id = ? AND pl.redeemed = 0 AND pl.sale_date BETWEEN ? AND ? AND s.sale_type = 'full'
 ");
 $stmt_period->bind_param("iss", $user_id, $start_date_str, $end_date_str);
 $stmt_period->execute();
@@ -76,6 +80,7 @@ $period_pending_points = (int) ($res_period['period_pending'] ?? 0);
 $stmt_period->close();
 
 // --- 3. FETCH PAYMENT HISTORY (FOR THE FILTERED PERIOD) ---
+// This query is correct and uses the 'payments' table as requested
 $payments_history = [];
 $total_paid_in_period = 0;
 
@@ -105,6 +110,7 @@ $stmt_history->close();
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Earnings</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/feather-icons"></script>
@@ -113,10 +119,10 @@ $stmt_history->close();
 <body class="bg-gray-50 min-h-screen">
     <div class="max-w-5xl mx-auto py-10 px-4">
 
-        <h1 class="text-3xl font-bold text-gray-800 mb-6">My Earnings</h1>
+        <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 mb-6">My Earnings</h1>
 
         <form method="GET" class="flex flex-wrap gap-4 mb-6 bg-white p-4 rounded-lg shadow-sm">
-            <label class="block flex-1 min-w-[120px]">
+            <label class="block w-full sm:flex-1 min-w-[120px]">
                 <span class="text-sm font-medium text-gray-700">Year</span>
                 <select name="year" class="border rounded px-3 py-2 w-full mt-1">
                     <?php for ($y = date('Y'); $y >= date('Y') - 3; $y--): ?>
@@ -124,16 +130,17 @@ $stmt_history->close();
                     <?php endfor; ?>
                 </select>
             </label>
-            <label class="block flex-1 min-w-[120px]">
+            <label class="block w-full sm:flex-1 min-w-[120px]">
                 <span class="text-sm font-medium text-gray-700">Month</span>
                 <select name="month" class="border rounded px-3 py-2 w-full mt-1">
                     <?php foreach (range(1, 12) as $m): ?>
                         <option value="<?= $m ?>" <?= $m == $month ? 'selected' : '' ?>>
-                            <?= date('F', mktime(0, 0, 0, $m, 1)) ?></option>
+                            <?= date('F', mktime(0, 0, 0, $m, 1)) ?>
+                        </option>
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label class="block flex-1 min-w-[120px]">
+            <label class="block w-full sm:flex-1 min-w-[120px]">
                 <span class="text-sm font-medium text-gray-700">Week</span>
                 <select name="week" class="border rounded px-3 py-2 w-full mt-1">
                     <option value="1" <?= $week == 1 ? 'selected' : '' ?>>Week 1 (1-7)</option>
@@ -144,7 +151,7 @@ $stmt_history->close();
             </label>
             <div class="self-end pt-1">
                 <button type="submit"
-                    class="bg-blue-600 text-white px-5 py-2 rounded hover:bg-blue-700 h-full">Filter</button>
+                    class="bg-blue-600 text-white px-5 py-2 rounded hover:bg-blue-700 h-full w-full sm:w-auto">Filter</button>
             </div>
         </form>
 
@@ -160,7 +167,8 @@ $stmt_history->close();
                         <div class="text-3xl font-bold text-gray-800"><?= number_format($total_pending_points) ?> Points
                         </div>
                         <div class="text-gray-600 font-medium">Est. Value: Rs.
-                            <?= number_format($total_pending_points * 0.01, 2) ?></div>
+                            <?= number_format($total_pending_points * 0.1, 2) ?>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -181,8 +189,8 @@ $stmt_history->close();
 
         <h2 class="text-xl font-semibold text-gray-700 mb-3">Payment History (<?= "$start_date_str to $end_date_str" ?>)
         </h2>
-        <div class="bg-white shadow-sm rounded-lg overflow-hidden">
-            <table class="min-w-full table-auto">
+        <div class="bg-white shadow-sm rounded-lg overflow-x-auto">
+            <table class="min-w-[640px] sm:min-w-full table-auto">
                 <thead class="bg-gray-100">
                     <tr>
                         <th class="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date Paid</th>
@@ -207,12 +215,14 @@ $stmt_history->close();
                                 </td>
                                 <td class="px-4 py-3 text-sm">
                                     <?php
+                                    // This logic correctly shows if the payment was for 'rep' or 'agency'
                                     $type_color = $p['payment_type'] == 'agency' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
                                     echo "<span class='px-2 py-0.5 rounded-full text-xs font-medium $type_color'>" . ucfirst($p['payment_type']) . "</span>";
                                     ?>
                                 </td>
                                 <td class="px-4 py-3 text-sm text-gray-700 text-right">
-                                    <?= number_format($p['points_redeemed']) ?></td>
+                                    <?= number_format($p['points_redeemed']) ?>
+                                </td>
                                 <td class="px-4 py-3 text-sm font-semibold text-gray-900 text-right">
                                     <?= number_format($p['amount'], 2) ?>
                                 </td>
@@ -220,8 +230,13 @@ $stmt_history->close();
                             </tr>
                         <?php endforeach; ?>
                         <tr class="bg-gray-100 font-bold">
-                            <td class="px-4 py-3 text-right" colspan="3">Total Paid in Period:</td>
-                            <td class="px-4 py-3 text-right">Rs. <?= number_format($total_paid_in_period, 2) ?></td>
+                            <td class="px-4 py-3 text-left" colspan="3">
+                                Total Paid in Period:
+                                <span class="sm:hidden font-bold"> Rs. <?= number_format($total_paid_in_period, 2) ?></span>
+                            </td>
+                            <td class="px-4 py-3 text-left sm:text-right hidden sm:table-cell">Rs.
+                                <?= number_format($total_paid_in_period, 2) ?>
+                            </td>
                             <td class="px-4 py-3"></td>
                         </tr>
                     <?php endif; ?>

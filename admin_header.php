@@ -1,49 +1,94 @@
 <?php
-// Ensure the user is logged in and is an admin
-if (!isset($_SESSION)) {
+// --- Session Start ---
+// Start session only if it hasn't been started yet
+if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$userId = isset($_SESSION['user_id']) ? htmlspecialchars((string) $_SESSION['user_id']) : null;
-
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+// --- Security Check ---
+// Redirects to login if user is not logged in or is not an admin
+if (!isset($_SESSION['user_id']) || !isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
     header('Location: /ref/login.php');
     exit;
 }
-?>
-<header class="bg-indigo-600 text-white p-4 shadow-md">
-    <!-- 
-        - flex-col sm:flex-row: Stack layout on mobile, row layout on small screens and up.
-        - gap-4 sm:gap-0: Adds spacing between title and buttons when stacked on mobile.
-    -->
-    <div class="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
-        <!-- Left: Title -->
-        <div class="flex flex-col items-center sm:items-start">
-            <h1 class="text-2xl font-bold tracking-wide">
-                Admin Dashboard
-            </h1>
-            <?php if ($userId !== null): ?>
-                <span class="text-sm text-indigo-100">
-                    User ID: <?php echo $userId; ?>
-                </span>
-            <?php endif; ?>
-        </div>
 
-        <!-- Right: Buttons -->
-        <!-- 
-            - flex-col sm:flex-row: Stacks buttons on mobile, row on small screens and up.
-            - gap-3 sm:space-x-3: Uses 'gap' for mobile stacking, 'space-x' for desktop row.
-            - w-full sm:w-auto: Makes the button container full-width on mobile, auto-width on desktop.
-        -->
-        <div class="flex flex-col sm:flex-row gap-3 sm:space-x-3 w-full sm:w-auto">
-            <a href="/ref/admin_dashboard.php"
-                class="bg-white text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-50 transition text-center w-full sm:w-auto">
-                ← Back to Dashboard
-            </a>
-            <a href="/ref/logout.php"
-                class="bg-red-500 px-4 py-2 rounded-lg font-medium hover:bg-red-600 transition text-center w-full sm:w-auto">
-                Logout
-            </a>
+// --- Get User Details from Session ---
+// All user information is stored in session during login (see auth.php)
+$admin_user_id = (int) $_SESSION['user_id'];
+$admin_username = isset($_SESSION['username']) ? htmlspecialchars((string) $_SESSION['username']) : 'Admin';
+$admin_first_name = isset($_SESSION['first_name']) ? (string) $_SESSION['first_name'] : '';
+$admin_last_name = isset($_SESSION['last_name']) ? (string) $_SESSION['last_name'] : '';
+
+// Set display name, falling back to username if name not found
+$full_name = trim($admin_first_name . ' ' . $admin_last_name);
+$admin_display_name = !empty($full_name)
+    ? htmlspecialchars($full_name)
+    : $admin_username;
+$admin_display_id = $admin_user_id;
+?>
+
+<nav class="bg-indigo-600 text-white px-4 sm:px-6 py-3 shadow-md">
+    <div class="max-w-6xl mx-auto flex flex-row justify-between items-center">
+
+        <a href="/ref/admin_dashboard.php" class="flex items-center gap-3 group">
+            <img src="/ref/public/logo.jpg" alt="Solenation Logo"
+                class="h-10 w-10 rounded-full border-2 border-indigo-400 object-cover">
+            <h1 class="text-xl font-semibold group-hover:text-indigo-100">Solenation </h1>
+        </a>
+
+        <div x-data="{ open: false }" @click.away="open = false" class="relative w-auto">
+
+            <button @click="open = !open"
+                class="flex items-center justify-center w-auto hover:text-indigo-100 transition duration-150 bg-indigo-500 bg-opacity-0 hover:bg-opacity-50 p-2 rounded-full">
+                <img src="https://img.icons8.com/ios-glyphs/30/FFFFFF/user--v1.png" alt="User" class="w-5 h-5" />
+            </button>
+
+            <div x-show="open" x-transition:enter="transition ease-out duration-100"
+                x-transition:enter-start="opacity-0 transform scale-95"
+                x-transition:enter-end="opacity-100 transform scale-100"
+                x-transition:leave="transition ease-in duration-75"
+                x-transition:leave-start="opacity-100 transform scale-100"
+                x-transition:leave-end="opacity-0 transform scale-95"
+                class="absolute right-0 mt-2 w-56 bg-white text-gray-700 rounded-md shadow-lg border z-50"
+                style="display: none;">
+                <div class="px-4 py-3 border-b">
+                    <p class="text-sm font-semibold text-gray-900 truncate" title="<?= $admin_display_name ?>">
+                        <?= $admin_display_name ?>
+                    </p>
+                    <p class="text-xs text-gray-500">
+                        Admin ID: <?= $admin_display_id ?>
+                    </p>
+                </div>
+
+                <div class="py-1">
+                    <a href="profile.php" class="flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100">
+                        <img src="https://img.icons8.com/ios-glyphs/90/1A1A1A/user-male-circle.png" alt="User"
+                            class="w-4 h-4 mr-2" />
+                        Profile
+                    </a>
+                    <a href="/ref/admin_dashboard.php"
+                        class="flex items-center w-full px-4 py-2 text-sm hover:bg-gray-100">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z">
+                            </path>
+                        </svg>
+                        Dashboard
+                    </a>
+                </div>
+
+                <div class="py-1 border-t">
+                    <a href="/ref/logout.php"
+                        class="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-gray-100">
+                        <img src="https://img.icons8.com/ios/100/FA5252/exit--v1.png" alt="Logout"
+                            class="w-4 h-4 mr-2" />
+                        Logout
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
-</header>
+</nav>
+
+<script src="https://cdn.jsdelivr.net/gh/alpinejs/alpine@v2.x.x/dist/alpine.min.js" defer></script>
